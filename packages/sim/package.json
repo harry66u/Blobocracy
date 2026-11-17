@@ -1,0 +1,2 @@
+{ "name": "@blobocracy/sim", "version": "0.0.0", "private": true, "type": "module",
+  "dependencies": { "@blobocracy/shared": "*", "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0" } }

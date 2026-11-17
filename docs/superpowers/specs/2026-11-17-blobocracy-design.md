@@ -234,8 +234,8 @@ Extra relay machines (performance-class, so they don't get CPU-throttled under l
 ### Budget governor (the cost cap)
 Fly has no spending limit of its own; its only hard stop (prepaid credit running out) suspends the whole account, which would take the game down mid-spike. So the game enforces its own cap:
 - The sim tracks estimated month-to-date spend from machine-hours by size and bytes sent, which every relay reports.
-- `BUDGET_MODE` = `cap` or `alert`. The client decides at deploy time; both are built. In `alert` mode the alerts fire but nothing below is enforced. The budget can be raised live through the admin endpoint without a restart.
-- `MONTHLY_BUDGET_USD` (default 45, leaving headroom under $50):
+- `BUDGET_MODE` = `cap` or `alert`; both are built. **Client decision: `cap`, budget $50/month, first alert at $25.** The client will raise the budget deliberately if the game takes off. In `alert` mode the alerts fire but nothing below is enforced. The budget can be raised live through the admin endpoint without a restart.
+- `MONTHLY_BUDGET_USD` (client's setting: 50) and `BUDGET_ALERT_USD` (client's setting: 25, plus alerts at 70%, 90% and 100%):
   - over 70%: state frame rate drops from 20 to 12 Hz for everyone (gameplay still works; the client's prediction covers it);
   - over 90%: new players beyond the always-on capacity join as **watchers** (lower frame rate, inputs still count), and no new relays are started;
   - at 100%: capacity is held at the always-on relays only; extra visitors see a friendly "Blobocracy is packed" screen with the live death counter, refreshed from a cached endpoint every 10 s.
