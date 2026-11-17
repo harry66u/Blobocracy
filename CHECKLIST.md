@@ -7,9 +7,11 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [x] Shared physics, crowd blending, level format, network protocol (57 tests)
 - [x] Game server: world, deaths, zones, record, pause when empty, voters, 128 crowd dots, virtual crowd, WebSocket relay
 - [x] Level 1 zones 1–2 (Welcome Mat, Pointy Meadow) designed and proven beatable by a solver bot
-- [~] Cartoon renderer, HUD, touch controls (matching the approved mockup)
-- [ ] Wire client to server, playtest the feel with bots, desktop + phone screenshots
-- [ ] Hand-off: local link, exact steps to play, command to add a few hundred bots
+- [x] Cartoon renderer, HUD, touch controls (matching the approved mockup)
+- [x] Wire client to server, playtest the feel with bots, desktop + phone screenshots
+- [x] Crowd-feel fixes from playtesting: burst jumps, movement response curve, on-screen pit deaths
+- [x] Independent code review; 6 important findings fixed
+- [x] Hand-off: local link, exact steps to play, command to add a few hundred bots (see README)
 
 ## Milestone 2: the whole level
 - [ ] Zones 3–6 with crushers, moving platforms, crumbling blocks, springs, saws, conveyors, the Big Chomp
