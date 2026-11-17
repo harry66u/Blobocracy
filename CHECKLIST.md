@@ -1,6 +1,6 @@
 # Blobocracy build checklist
 
-Updated as work lands. `[x]` done, `[x]` in progress, `[ ]` not started.
+Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 
 ## Milestone 1: playable core
 - [x] Project skeleton (monorepo, TypeScript, tests)
@@ -29,9 +29,9 @@ Updated as work lands. `[x]` done, `[x]` in progress, `[ ]` not started.
 
 ## Milestone 4: scale
 - [x] Separate simulation server and edge relays (agent working)
-- [ ] Anti-bot: proof-of-work tokens, per-IP caps, rate limits, behaviour checks
-- [ ] Bot simulator and load test with thousands of connections
-- [ ] Graceful degradation; budget cap at $50/month with alert at $25
+- [x] Anti-bot: proof-of-work tokens, per-IP caps, rate limits, behaviour checks
+- [x] Bot simulator and load test with thousands of connections
+- [x] Graceful degradation; budget cap at $50/month with alert at $25
 
 ## Milestone 5: history
 - [x] Postgres + Redis, crash recovery (outage queueing, live snapshot resume, shared abuse state)
