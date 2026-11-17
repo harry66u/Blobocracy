@@ -73,6 +73,7 @@ export class Director {
   onDeath(e: DeathEvent, now: number): void {
     this.deaths = e.deaths;
     this.death = { ...e, at: now, line: deathLine(e.cause, e.run) };
+    this.banner = null; // the death card takes the stage
   }
 
   onRecord(e: { run: number; progress: number }): void {

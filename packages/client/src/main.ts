@@ -1,7 +1,9 @@
 // The game page: connects to the shared world, sends this player's input, and draws
 // the server's blob with a little prediction so it feels responsive. The big moments
 // (death, new zone, passing the record) are choreographed by the Director and the
-// CameraRig; sound hooks are marked `// audio:` for the GameAudio module.
+// CameraRig; sound comes from the synthesized GameAudio module.
+import { createGameAudio } from './audio/index.ts';
+import { AudioCues } from './audiocues.ts';
 import './fonts.css';
 import { DOT_EMPTY, DOT_LEFT, DOT_RIGHT, LEVEL1, progressOf, tileAt, zoneAt, type ServerEvent } from '@blobocracy/shared';
 import { CameraRig } from './camera.ts';
@@ -35,13 +37,15 @@ const loadingDeathsEl = document.getElementById('loading-deaths');
 
 let reduced = loadReducedMotion();
 let muted = loadMuted();
-// audio: audio.setMuted(muted)
+const audio = createGameAudio();
+const cues = new AudioCues(LEVEL1);
+audio.setMuted(muted);
 
 const announce = (text: string) => { announceEl.textContent = text; };
 const director = new Director(() => reduced, {
   announce,
   recordPassed: () => {
-    // audio: audio.cheer()
+    audio.cheer('record');
   },
 });
 const rig = new CameraRig();
@@ -61,7 +65,7 @@ function onEvent(e: ServerEvent): void {
       deathCause = null;
       cardRun = null;
       if (loadingDeathsEl) loadingDeathsEl.textContent = `${e.deaths.toLocaleString('en-US')} deaths so far`;
-      // audio: audio.setZone(e.zone)
+      audio.setZone(e.zone);
       break;
     case 'death':
       director.onDeath(e, now);
@@ -69,7 +73,7 @@ function onEvent(e: ServerEvent): void {
       cardRun = e.run;
       if (!reduced) rig.kick(DEATH_SHAKE.amp, DEATH_SHAKE.dur);
       announce(`${e.nearRecord ? 'So close. ' : ''}Run ${e.run.toLocaleString('en-US')} made it ${Math.round(e.progress * 100)}% of the way, then the ${causeName(e.cause)} got it. Deaths: ${e.deaths.toLocaleString('en-US')}.`);
-      // audio: audio.death(e.cause)   (one heavy hit, then the music stops)
+      audio.death(); // one heavy hit, then the music stops
       break;
     case 'record':
       director.onRecord(e);
@@ -83,12 +87,13 @@ function onEvent(e: ServerEvent): void {
       const from = pos ? pos.x : level.spawn.x;
       pos = null; // the blob itself snaps to the start
       rig.swoop(swoopDuration(from - level.spawn.x, reduced), reduced);
-      // audio: audio.resetToStart()   (the music fades back in)
+      audio.resetToStart(); // the music fades back in
       break;
     }
     case 'zone':
       director.onZone(e.index, e.name, now);
-      // audio: audio.setZone(e.index); audio.cheer()
+      audio.setZone(e.index);
+      audio.cheer('zone');
       break;
   }
 }
@@ -97,28 +102,30 @@ const proto = location.protocol === 'https:' ? 'wss' : 'ws';
 const net = connect(`${proto}://${location.host}/ws`, onEvent);
 const input = new InputState((bits) => net.sendInput(bits));
 
-const view = createCanvasView(document.getElementById('game') as HTMLCanvasElement, () => controls.place());
+let onLayout = () => {};
+const view = createCanvasView(document.getElementById('game') as HTMLCanvasElement, () => onLayout());
 const controls = mountHudControls(document.body, {
   layout: () => view.layout,
   muted: () => muted,
   setMuted: (m) => {
     muted = m;
     saveMuted(m);
-    // audio: audio.setMuted(m)
+    audio.setMuted(m);
   },
   reduced: () => reduced,
   setReduced: (on) => { reduced = on; saveReducedMotion(on); },
 });
+onLayout = () => controls.place();
 
 // Keyboard (not while the settings panel is open or a HUD button has focus)
 const wantsKeys = (e: KeyboardEvent) => !controls.isOpen() && !(e.target instanceof HTMLElement && e.target.closest('.bl-hudbtn, .bl-modal'));
 addEventListener('keydown', (e) => {
-  // audio: audio.unlock()   (browsers need a key press or tap first)
+  audio.unlock(); // browsers need a key press or tap first
   if (isGameKey(e.code) && wantsKeys(e)) { e.preventDefault(); input.key(e.code, true); }
 });
 addEventListener('keyup', (e) => { if (isGameKey(e.code)) { if (wantsKeys(e)) e.preventDefault(); input.key(e.code, false); } });
 addEventListener('pointerdown', () => {
-  // audio: audio.unlock()
+  audio.unlock();
 }, { capture: true });
 // Never leave a button "held" when the player switches away (review focus 1).
 releaseWhenHidden(window, document, () => input.releaseAll());
@@ -171,13 +178,21 @@ function frame(): void {
     const dead = f.phase === 'dying';
     blob = { x: pos.x, y: pos.y, vx: body.vx, vy: body.vy, grounded: body.grounded, facing: body.facing, pull: f.pull, strain: f.strain, dead, deathCause: dead ? deathCause : null };
     online = f.online;
+    // World sounds: saws buzz when close, presses slam, crumbles crack, the crowd hums.
+    if (f.phase === 'running') {
+      audio.sawNear(cues.sawProximity(runTime, pos.x, pos.y));
+      for (const d of cues.slams(runTime, pos.x)) audio.pressSlam(d);
+      if (cues.newCrumbles(f.crumbles) > 0) audio.crumble();
+    }
+    audio.setCrowd(f.online, f.strain);
     if (!keepDeathCard(cardRun === null ? null : { run: cardRun }, f)) { cardRun = null; deathCause = dead ? deathCause : null; }
     if (!dead) {
       if (!prevGrounded && body.grounded && prevVy > 6) {
-        // audio: audio.land(Math.min(1, prevVy / 22))
+        audio.land(Math.min(1, prevVy / 22));
       }
       if (prevGrounded && !body.grounded && body.vy < -2) {
-        // audio: audio.jump()
+        if (AudioCues.isSpring(body.vy)) audio.spring();
+        else audio.jump(Math.min(1, -body.vy / 18));
       }
     }
     prevGrounded = body.grounded;
@@ -239,6 +254,7 @@ function frame(): void {
   document.body.classList.toggle('bl-dying', blob.dead);
 
   renderFrame(view.ctx, L, cam, scene, t);
+  audio.tick();
 
   const msg = !net.state.connected && loadingGone ? 'Reconnecting to the blob…' : '';
   if (statusEl.textContent !== msg) { statusEl.textContent = msg; statusEl.classList.toggle('show', !!msg); }

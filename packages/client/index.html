@@ -28,7 +28,7 @@
   #loading .cloud { position: absolute; width: 150px; height: 60px; }
   #loading h1 { position: relative; margin: 0; font: 400 clamp(48px, 13vw, 104px)/1 'Bagel Fat One', 'Atkinson Hyperlegible Next', system-ui, sans-serif; color: #FFD21F;
     -webkit-text-stroke: clamp(7px, 1.6vw, 12px) #2A1B3D; paint-order: stroke fill; text-shadow: 0 clamp(5px, 1vw, 8px) 0 #2A1B3D; letter-spacing: .5px; transform: rotate(-3deg); }
-  #loading .stage { position: relative; width: 180px; height: 150px; margin-top: 4px; }
+  #loading .stage { position: relative; width: 180px; height: 176px; margin-top: 18px; }
   #loading .bob { position: absolute; left: 50%; bottom: 36px; width: 84px; height: 80px; margin-left: -42px; transform-origin: 50% 100%; animation: bl-bounce 0.9s cubic-bezier(.33,0,.67,1) infinite; }
   #loading .shadow { position: absolute; left: 50%; bottom: 30px; width: 70px; height: 12px; margin-left: -35px; border-radius: 50%; background: rgba(42,27,61,.22); animation: bl-shadow 0.9s cubic-bezier(.33,0,.67,1) infinite; }
   #loading .plat { position: absolute; left: 10px; right: 10px; bottom: 0; height: 36px; border: 3.5px solid #2A1B3D; border-radius: 14px; background: linear-gradient(#FFFBF1 0 9px, #FFF1D6 9px 60%, #F2D8AE); box-shadow: 0 5px 0 #2A1B3D; box-sizing: border-box; }
@@ -38,7 +38,7 @@
   @keyframes bl-bounce {
     0%, 100% { transform: translateY(0) scale(1.18, .8); }
     12% { transform: translateY(-14px) scale(.9, 1.12); }
-    50% { transform: translateY(-62px) scale(.97, 1.03); }
+    50% { transform: translateY(-52px) scale(.97, 1.03); }
     88% { transform: translateY(-10px) scale(.92, 1.1); }
   }
   @keyframes bl-shadow { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.55); opacity: .45; } }
@@ -50,8 +50,8 @@
 <canvas id="game" aria-label="Blobocracy: everyone steers the same blob. Arrow keys or A and D to move, W, up or space to jump."></canvas>
 <div id="loading" role="status" aria-live="polite">
   <div class="sun" aria-hidden="true"></div>
-  <svg class="cloud" style="left:8%;top:16%" viewBox="0 0 150 60" aria-hidden="true"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
-  <svg class="cloud" style="right:6%;top:58%;width:110px" viewBox="0 0 150 60" aria-hidden="true"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
+  <svg class="cloud" style="left:8%;top:13%" viewBox="0 0 150 60" aria-hidden="true"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
+  <svg class="cloud" style="right:7%;top:72%;width:110px" viewBox="0 0 150 60" aria-hidden="true"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
   <svg class="hills" viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true"><path d="M0 60C60 20 110 30 160 55S280 20 400 45V100H0z" fill="#A9DDF7"/><path d="M0 80C70 55 130 70 200 82S330 60 400 74V100H0z" fill="#86CBEF"/></svg>
   <h1>Blobocracy</h1>
   <div class="stage" aria-hidden="true">

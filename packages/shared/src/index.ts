@@ -6,3 +6,6 @@ export * from './blend';
 export * from './physics';
 export * from './protocol';
 export * from './levels/level1';
+export * from './pow';
+export * from './link';
+export * from './stats';

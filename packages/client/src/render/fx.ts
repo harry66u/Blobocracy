@@ -30,14 +30,30 @@ export function flagGroundRow(level: SceneLevel, x: number): number {
   return level.height + 2;
 }
 
+/**
+ * Where the record flag stands: at world x on its floor, or, when x is over a pit, at
+ * the lip of the ground it jumped from (a flag can't stand on thin air).
+ */
+export function flagSpot(level: SceneLevel, x: number): { x: number; row: number } {
+  const row = flagGroundRow(level, x);
+  if (row < level.height) return { x, row };
+  for (let k = 1; k <= 8; k++) {
+    const tx = Math.floor(x) - k;
+    const r = flagGroundRow(level, tx + 0.5);
+    if (r < level.height) return { x: tx + 0.7, row: r };
+  }
+  return { x, row };
+}
+
 /** The record flag in the world: a pole with a waving pink pennant showing the record. */
 export function drawRecordFlag(
   g: CanvasRenderingContext2D, T: number, sx: (x: number) => number, sy: (y: number) => number,
   level: SceneLevel, x: number, label: string, timeS: number, viewW: number,
 ): void {
-  const px = sx(x);
+  const spot = flagSpot(level, x);
+  const px = sx(spot.x);
   if (px < -T * 3 || px > viewW + T) return;
-  const row = flagGroundRow(level, x);
+  const row = spot.row;
   const baseY = sy(row);
   const poleH = T * 3.1;
   const topY = baseY - poleH;
@@ -298,7 +314,7 @@ export class Confetti {
     for (let k = 0; k < count; k++) {
       const x = this.rnd() * L.w;
       const fromMid = (x - L.w / 2) / (L.w / 2);
-      this.add(x, -10 - this.rnd() * 60 * s, fromMid * 60 * s + (this.rnd() - 0.5) * 140 * s, reduced ? 40 * s : (60 + this.rnd() * 300) * s, 9 * s);
+      this.add(x, -10 - this.rnd() * (reduced ? 40 : 260) * s, fromMid * 60 * s + (this.rnd() - 0.5) * 140 * s, reduced ? 40 * s : (40 + this.rnd() * 280) * s, (L.phone ? 11 : 14) * s);
     }
   }
 
@@ -309,7 +325,7 @@ export class Confetti {
     for (let k = 0; k < count; k++) {
       const a = -Math.PI / 2 + (this.rnd() - 0.5) * Math.PI * 1.4;
       const sp = (reduced ? 60 : 160 + this.rnd() * 260) * s;
-      this.add(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 7 * s);
+      this.add(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 10 * s);
     }
   }
 

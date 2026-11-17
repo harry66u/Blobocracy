@@ -82,6 +82,8 @@ const states = [
   { name: 'moment-record', q: 'sky=sunset&x=100&dots=80&strain=0&at=0.3&moment=record&slow=0.25', age: 0.5 },
   { name: 'moment-reduced-zone', q: 'sky=sunset&x=73&dots=80&strain=0&at=0.3&moment=zone&slow=0.25&reduced=1', age: 0.9 },
   { name: 'settings', q: 'sky=blue&dots=80&still=1&strain=0&settings=1' },
+  // the game page with no game server running: it stays on the loading screen
+  { name: 'loading', path: '/', q: '' },
 ];
 const views = [
   { name: 'desktop', viewport: { width: 1600, height: 900 }, touch: false },
@@ -100,6 +102,15 @@ try {
       const page = await ctx.newPage();
       page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name}: ${m.text()}`); });
       page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
+      if (s.path) {
+        await page.goto(`http://localhost:${PORT}${s.path}`);
+        await page.waitForTimeout(1200);
+        const file = join(out, `${name}.png`);
+        await page.screenshot({ path: file });
+        console.log('wrote', file);
+        await page.close();
+        continue;
+      }
       await page.goto(`http://localhost:${PORT}/preview.html?${s.q}${v.touch ? '&touch=1' : ''}`);
       await page.waitForFunction(() => (window.__frames ?? 0) > 5, null, { timeout: 15000 });
       if (s.age !== undefined) await page.waitForFunction((a) => (window.__momentAge ?? -1) >= a, s.age, { timeout: 60000, polling: 'raf' });

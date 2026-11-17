@@ -42,6 +42,13 @@ export type ServerEvent =
   | { t: 'record'; run: number; progress: number }
   | { t: 'reset'; run: number };
 
+/**
+ * JSON text notices from the edge relay itself (not world events): whether the relay can reach
+ * the sim right now. While `up` is false, clients show "Reconnecting to the blob…" over the
+ * last frame; the socket to the relay stays open and pings keep being answered.
+ */
+export type EdgeNotice = { t: 'sim'; up: boolean };
+
 const PHASES = ['running', 'dying', 'paused'] as const;
 const STATE_HEADER = 46;
 const CRUMBLE_BYTES = 8;

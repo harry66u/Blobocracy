@@ -3,7 +3,7 @@ import { decodeClient, encodePong, type ServerEvent } from '@blobocracy/shared';
 import type { Voters } from './crowd';
 import type { World } from './world';
 
-/** Where state frames and events go. Milestone 4 adds remote edge relays behind this interface. */
+/** Where state frames and events go: the in-process relay (dev) and the link to edge relays (hub.ts). */
 export interface Relay {
   broadcast(frame: Uint8Array): void;
   broadcastEvent(e: ServerEvent): void;
@@ -15,7 +15,7 @@ const MAX_MESSAGE_BYTES = 64;
 
 interface SocketData { id: number }
 
-/** Serves browsers directly from the sim process (milestone 1 only). */
+/** Serves browsers directly from the sim process: single-process dev mode (`npm run dev`). */
 export function startLocalRelay(opts: { port: number; voters: Voters; world: World; clock: () => number }):
   Promise<Relay & { port: number }> {
   const { voters, world, clock } = opts;
@@ -53,6 +53,9 @@ export function startLocalRelay(opts: { port: number; voters: Voters; world: Wor
       voters.leave(ws.getUserData().id);
     },
   });
+
+  // No session service in single-process dev: the client sees 404 on /session and connects without a token.
+  app.any('/*', (res) => { res.writeStatus('404 Not Found').end('not found'); });
 
   return new Promise((resolve, reject) => {
     app.listen('0.0.0.0', opts.port, (token) => {

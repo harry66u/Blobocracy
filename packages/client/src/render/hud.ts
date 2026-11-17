@@ -136,7 +136,7 @@ export class HudView {
     if (line2) ctx.fillText(line2, rx, y2);
     const rightW = Math.max(this.measure(ctx, fontBig, line1), line2 ? this.measure(ctx, fontSmall, line2) : 0);
     const pop = hud.recordPop;
-    if (pop !== null && pop !== undefined && pop >= 0 && pop < RECORD_POP_S) this.recordSticker(ctx, rx, y2 + (phone ? 20 : 26) * s, s, pop);
+    if (pop !== null && pop !== undefined && pop >= 0 && pop < RECORD_POP_S) this.recordSticker(ctx, rx, phone ? 128 * s : y2 + 26 * s, s * (phone ? 0.9 : 1), pop);
     return pad + Math.max(leftW, rightW);
   }
 
@@ -375,7 +375,8 @@ export class HudView {
     const f13 = `600 ${(13 * s).toFixed(1)}px ${FONT_TEXT}`;
     const line1 = `Run ${fmt(card.run)} made it`;
     const big = `${Math.round(clamp01(card.progress) * 100)}%`;
-    const lines = wrap(ctx, f15, `of the way, ${card.line}`, cw - 44 * s);
+    // keep hazard names together on one line ("Big Press", "Ceiling Spikes")
+    const lines = wrap(ctx, f15, `of the way, ${card.line}`.replace(/\b(Big|Ceiling) /g, '$1\u00A0'), cw - 44 * s);
     const lh = 21 * s;
     const footer = card.countdown ? `Back to the start in ${card.countdown}` : '';
     const chh = 128 * s + lines.length * lh + (footer ? 30 * s : 4 * s);
@@ -484,9 +485,11 @@ function flapHalf(ctx: CanvasRenderingContext2D, c: FlapCard, half: 'top' | 'bot
   if (half === 'top') ctx.rect(c.x - pad, c.y - pad - c.ch, c.cw + pad * 2, c.ch * 1.5 + pad);
   else ctx.rect(c.x - pad, hinge, c.cw + pad * 2, c.ch * 1.5 + pad);
   ctx.clip();
-  ctx.translate(0, hinge);
-  ctx.scale(1, Math.max(0.001, scaleY));
-  ctx.translate(0, -hinge);
+  // a hint of perspective: the flap grows a little wider as it swings toward us
+  const widen = 1 + 0.1 * Math.sin(Math.acos(Math.min(1, Math.max(0, scaleY))));
+  ctx.translate(c.x + c.cw / 2, hinge);
+  ctx.scale(widen, Math.max(0.001, scaleY));
+  ctx.translate(-(c.x + c.cw / 2), -hinge);
   ctx.beginPath();
   ctx.roundRect(c.x, c.y, c.cw, c.ch, c.r);
   ctx.fillStyle = fill;
@@ -511,7 +514,15 @@ function flapHalf(ctx: CanvasRenderingContext2D, c: FlapCard, half: 'top' | 'bot
 function wrap(ctx: CanvasRenderingContext2D, font: string, text: string, maxW: number): string[] {
   ctx.font = font;
   if (ctx.measureText(text).width <= maxW) return [text];
+  // two lines: split where the longer line is shortest (no lonely last word)
   const words = text.split(' ');
+  let best: string[] | null = null, bestW = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(' '), b = words.slice(i).join(' ');
+    const w = Math.max(ctx.measureText(a).width, ctx.measureText(b).width);
+    if (w <= maxW && w < bestW) { best = [a, b]; bestW = w; }
+  }
+  if (best) return best;
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {

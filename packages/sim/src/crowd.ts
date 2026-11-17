@@ -1,17 +1,32 @@
-import { ACTIVE_WINDOW_S, BLEND, SAMPLE_SLOTS, type VoteCounts } from '@blobocracy/shared';
+import {
+  ACTIVE_WINDOW_S, BLEND, SAMPLE_SLOTS, type SampleEntry, type VoteCounts, type WeightedCounts,
+} from '@blobocracy/shared';
 
 const IN_LEFT = 1, IN_RIGHT = 2, IN_JUMP = 4;
 const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2, DOT_EMPTY = 3;
 
-interface Voter { bits: number; changedAt: number; jumpAt: number; everPressed: boolean; slot: number }
+interface Voter { bits: number; changedAt: number; jumpAt: number; everPressed: boolean; slot: number; remote: boolean }
+
+/** What the sim keeps from an edge relay's latest summary. */
+export interface RelayCrowd { weighted: WeightedCounts; connections: number; sample: SampleEntry[] }
+interface RelayEntry { weighted: WeightedCounts; connections: number; ids: Map<number, number> }
+
+/** Voter id for a relay's sampled player: negative, so it never clashes with local ids. */
+const remoteId = (relay: number, sid: number) => -(relay * 65536 + sid) - 1;
 
 /**
  * Tracks every connected voter's input and decides who is "active".
  * Also owns the 128-slot crowd sample: each slotted voter keeps its slot
  * until it leaves, so its dot on everyone's screen stays the same dot.
+ *
+ * Players on edge relays arrive as per-relay summaries (`setRelay`): their already-weighted
+ * counts are added to the local voters' counts, and each relay's sampled players hold crowd
+ * slots like local voters do (they only feed the dots; their votes are in the counts).
  */
 export class Voters {
   private voters = new Map<number, Voter>();
+  private relays = new Map<number, RelayEntry>();
+  private remoteVoters = 0;
   private slots: (number | null)[] = new Array(SAMPLE_SLOTS).fill(null);
   private unslotted = new Set<number>();
   private readonly dots = new Uint8Array(SAMPLE_SLOTS);
@@ -19,7 +34,7 @@ export class Voters {
 
   join(id: number): void {
     if (this.voters.has(id)) return;
-    this.voters.set(id, { bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false, slot: -1 });
+    this.voters.set(id, { bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false, slot: -1, remote: false });
     this.unslotted.add(id);
     this.fillSlots();
   }
@@ -28,6 +43,7 @@ export class Voters {
     const v = this.voters.get(id);
     if (!v) return;
     if (v.slot >= 0) this.slots[v.slot] = null;
+    if (v.remote) this.remoteVoters--;
     this.voters.delete(id);
     this.unslotted.delete(id);
   }
@@ -42,10 +58,61 @@ export class Voters {
     if (bits) v.everPressed = true;
   }
 
+  /** Replaces relay `relay`'s contribution with its latest summary. */
+  setRelay(relay: number, s: RelayCrowd): void {
+    let r = this.relays.get(relay);
+    if (!r) { r = { weighted: s.weighted, connections: s.connections, ids: new Map() }; this.relays.set(relay, r); }
+    r.weighted = { ...s.weighted };
+    r.connections = s.connections;
+    const seen = new Set<number>();
+    for (const e of s.sample) {
+      seen.add(e.id);
+      let id = r.ids.get(e.id);
+      if (id === undefined) {
+        id = remoteId(relay, e.id);
+        r.ids.set(e.id, id);
+        this.voters.set(id, { bits: e.bits & 7, changedAt: 0, jumpAt: 0, everPressed: true, slot: -1, remote: true });
+        this.remoteVoters++;
+        this.unslotted.add(id);
+      } else {
+        this.voters.get(id)!.bits = e.bits & 7;
+      }
+    }
+    for (const [sid, id] of r.ids) {
+      if (seen.has(sid)) continue;
+      r.ids.delete(sid);
+      this.leave(id);
+    }
+    this.fillSlots();
+  }
+
+  /** Forgets a relay (its link closed): its votes, players and dots go at once. */
+  dropRelay(relay: number): void {
+    const r = this.relays.get(relay);
+    if (!r) return;
+    for (const id of r.ids.values()) this.leave(id);
+    this.relays.delete(relay);
+  }
+
+  /** The crowd slot of relay `relay`'s sampled player `sid`, or -1. */
+  relaySlotOf(relay: number, sid: number): number {
+    const id = this.relays.get(relay)?.ids.get(sid);
+    return id === undefined ? -1 : this.slotOf(id);
+  }
+
+  /** Relay ids currently contributing. */
+  relayIds(): number[] {
+    return [...this.relays.keys()];
+  }
+
   counts(nowS: number): VoteCounts {
     let left = 0, right = 0, jump = 0, active = 0, fresh = 0;
+    for (const r of this.relays.values()) {
+      const w = r.weighted;
+      left += w.left; right += w.right; jump += w.jump; active += w.active; fresh += w.fresh;
+    }
     for (const v of this.voters.values()) {
-      if (!this.isActive(v, nowS)) continue;
+      if (v.remote || !this.isActive(v, nowS)) continue;
       active++;
       const l = v.bits & IN_LEFT, r = v.bits & IN_RIGHT;
       if (l && !r) left++;
@@ -76,8 +143,11 @@ export class Voters {
     return this.voters.get(id)?.slot ?? -1;
   }
 
+  /** Players online: local voters plus every relay's connections. */
   size(): number {
-    return this.voters.size;
+    let n = this.voters.size - this.remoteVoters;
+    for (const r of this.relays.values()) n += r.connections;
+    return n;
   }
 
   private isActive(v: Voter, nowS: number): boolean {

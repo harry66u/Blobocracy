@@ -329,7 +329,7 @@ function popPose({ g, T, cx, feetY, t, timeS }: PoseCtx, ceiling: boolean): void
   }
   const burstK = t < 0.01 ? 1 : 1 + t * 1.2;
   const burstA = t < 0.01 ? 1 : Math.max(0, 1 - t / 0.45);
-  popBurst(g, T, cx + r * 1.25, (ceiling ? anchorY + T * 0.1 : feetY - r * 1.9), burstK * 0.9, burstA, -0.18 + Math.sin(timeS * 30) * 0.02 * burstA);
+  popBurst(g, T, cx + r * 2.05, ceiling ? anchorY + r * 0.35 : feetY - r * 0.75, burstK * 0.82, burstA, (ceiling ? 0.14 : -0.16) + Math.sin(timeS * 30) * 0.02 * burstA);
 }
 
 // ---- the Pit: a tiny wave, then falling away ------------------------------------------
@@ -359,17 +359,22 @@ function pitPose({ g, T, cx, feetY, t }: PoseCtx): void {
     }
     g.stroke();
   }
-  // waving arm (behind the body edge)
-  const wave = t < WAVE_S ? Math.sin(t * 16) * 0.45 : 0.6;
+  // a tiny waving arm, raised up and out on the right (behind the body edge)
+  const wave = t < WAVE_S ? Math.sin(t * 16 + 0.6) * 0.38 : -0.5;
   g.save();
-  g.translate(bw * 0.8, -bh * 0.1);
-  g.rotate(-1.15 + wave);
+  g.translate(bw * 0.72, -bh * 0.05);
+  g.rotate(0.5 + wave);
   g.beginPath();
-  g.roundRect(-T * 0.12, -T * 0.72, T * 0.24, T * 0.78, T * 0.12);
+  g.roundRect(-T * 0.11, -T * 0.95, T * 0.22, T * 1.0, T * 0.11);
   g.fillStyle = BLOB;
   g.fill();
-  g.lineWidth = T * 0.08;
+  g.lineWidth = T * 0.075;
   g.strokeStyle = INK;
+  g.stroke();
+  // little hand
+  g.beginPath();
+  g.arc(0, -T * 0.98, T * 0.16, 0, TAU);
+  g.fill();
   g.stroke();
   g.restore();
   paintBody(g, bodyPath(bw, bh), bw, bh, T);
@@ -520,8 +525,8 @@ export function drawGulp({ g, T, cx, feetY, t }: PoseCtx): void {
   g.save();
   g.rotate(-0.12 + (t > 0 ? Math.sin(t * 9) * 0.08 * Math.exp(-t * 1.5) : 0));
   g.beginPath();
-  g.moveTo(-r * 0.5, -h * 0.72);
-  g.bezierCurveTo(-r * 0.5, -h * 1.45, r * 0.5, -h * 1.45, r * 0.5, -h * 0.72);
+  g.moveTo(-r * 0.62, -h * 0.7);
+  g.bezierCurveTo(-r * 0.62, -h * 1.62, r * 0.62, -h * 1.62, r * 0.62, -h * 0.7);
   g.closePath();
   g.fillStyle = BLOB;
   g.fill();
@@ -531,15 +536,15 @@ export function drawGulp({ g, T, cx, feetY, t }: PoseCtx): void {
   g.stroke();
   // curl of hair on top
   g.beginPath();
-  g.moveTo(0, -h * 1.27);
-  g.bezierCurveTo(-r * 0.05, -h * 1.7, r * 0.42, -h * 1.75, r * 0.3, -h * 1.48);
-  g.bezierCurveTo(r * 0.22, -h * 1.33, r * 0.05, -h * 1.42, r * 0.12, -h * 1.52);
+  g.moveTo(0, -h * 1.38);
+  g.bezierCurveTo(-r * 0.05, -h * 1.85, r * 0.46, -h * 1.9, r * 0.33, -h * 1.6);
+  g.bezierCurveTo(r * 0.24, -h * 1.44, r * 0.05, -h * 1.53, r * 0.13, -h * 1.64);
   g.lineWidth = T * 0.08;
   g.lineCap = 'round';
   g.stroke();
   g.fillStyle = 'rgba(255,255,255,.8)';
   g.beginPath();
-  g.ellipse(-r * 0.22, -h * 1.12, r * 0.1, r * 0.06, -0.5, 0, TAU);
+  g.ellipse(-r * 0.26, -h * 1.2, r * 0.12, r * 0.07, -0.5, 0, TAU);
   g.fill();
   g.restore();
   // the dark inside of the mouth
@@ -561,7 +566,7 @@ export function drawGulp({ g, T, cx, feetY, t }: PoseCtx): void {
   g.lineJoin = 'round';
   for (const s of [-1, 1]) {
     g.beginPath();
-    const n = 4;
+    const n = 3;
     for (let i = 0; i < n; i++) {
       const x0 = -w + (i / n) * 2 * w, x1 = -w + ((i + 1) / n) * 2 * w;
       const len = h * (0.42 + 0.1 * ((i + (s > 0 ? 1 : 0)) % 2));
