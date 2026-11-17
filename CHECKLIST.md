@@ -14,21 +14,21 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [x] Hand-off: local link, exact steps to play, command to add a few hundred bots (see README)
 
 ## Milestone 2: the whole level
-- [ ] Zones 3–6 with crushers, moving platforms, crumbling blocks, springs, saws, conveyors, the Big Chomp
-- [ ] Level preview image
-- [ ] Solver proves an 8–12 minute perfect run
-- [ ] Simulated crowds tune difficulty (days–weeks to beat)
+- [x] Zones 3–6 with crushers, moving platforms, crumbling blocks, springs, saws, conveyors, the Big Chomp (70+ hand-designed rooms)
+- [x] Level preview image
+- [x] Solver proves an 8.2 minute perfect run (`npm run test:level`)
+- [~] Difficulty report from timing windows (tool built; calibrating)
 
 ## Milestone 3: feel
-- [ ] Blob personality: squash and stretch, blinking, looking at the crowd, panic
-- [ ] Death moment: freeze, heavy sound, counter flip, "how far" card, swoop back
-- [ ] New zone moment: banner, crowd cheer, sky shift
-- [ ] Particles, camera look-ahead and shake
-- [ ] Synthesized sound and music, mute, reduced motion
-- [ ] Loading screen
+- [x] Blob personality: squash and stretch, blinking, looking at the crowd, panic
+- [x] Death moment: freeze with cause-specific pose, heavy sound, split-flap counter flip, "how far" card, swoop back
+- [x] New zone moment: banner, confetti, crowd cheer, sky shift
+- [x] Particles, camera look-ahead and shake
+- [x] Synthesized sound and music, mute, reduced motion, settings panel
+- [x] Loading screen
 
 ## Milestone 4: scale
-- [ ] Separate simulation server and edge relays
+- [~] Separate simulation server and edge relays (agent working)
 - [ ] Anti-bot: proof-of-work tokens, per-IP caps, rate limits, behaviour checks
 - [ ] Bot simulator and load test with thousands of connections
 - [ ] Graceful degradation; budget cap at $50/month with alert at $25
@@ -40,7 +40,7 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 
 ## Milestone 6: clips
 - [ ] Server-recorded replays on records and near misses
-- [ ] Clip page; vertical and wide video export; one-tap share
+- [~] Clip page; vertical and wide video export; one-tap share (agent working)
 - [ ] Link preview images
 
 ## Milestone 7: win and ship

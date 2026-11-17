@@ -60,7 +60,7 @@ function survives(at: number, shift: number): boolean {
   }
   if (end >= steps.length) return true;
   // Re-plan: can the crowd still get RECOVER tiles further from here?
-  return solve(L, Math.min(b.x + RECOVER, L.goalX - 0.5), 60, 8, { b, dyn }).ok;
+  return solve(L, Math.min(b.x + RECOVER, L.goalX - 0.5), 150, 12, { b, dyn }).ok;
 }
 
 /** Largest shift in 0..MAX_SHIFT (one direction) that is still recoverable, by binary search. */
@@ -78,15 +78,17 @@ function windowSize(at: number, dir: 1 | -1): number {
 const phi = (z: number) => 0.5 * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (z + 0.044715 * z ** 3)));
 interface Moment { at: number; x: number; zone: number; early: number; late: number }
 const moments: Moment[] = [];
+let unmeasured = 0;
 for (let i = 1; i < steps.length; i++) {
   const a = steps[i - 1]!, c = steps[i]!;
   if (a.move === c.move && a.jumpHeld === c.jumpHeld) continue;
+  if (!survives(i, 0)) { unmeasured++; continue; } // the recovery planner can't judge this one
   const late = windowSize(i, 1), early = windowSize(i, -1);
   if (late >= MAX_SHIFT && early >= MAX_SHIFT) continue; // not a critical moment
   moments.push({ at: i, x: snaps[i]!.b.x, zone: zoneAt(L, snaps[i]!.b.x).index, early, late });
 }
 
-console.log(`route: ${(steps.length / 60 / 60).toFixed(2)} min, ${moments.length} critical moments\n`);
+console.log(`route: ${(steps.length / 60 / 60).toFixed(2)} min, ${moments.length} critical moments (${unmeasured} unmeasurable)\n`);
 for (const [label, sigma] of Object.entries(SIGMA)) {
   console.log(label);
   let all = 1;
