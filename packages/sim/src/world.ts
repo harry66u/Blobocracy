@@ -7,6 +7,20 @@ import {
 export interface WorldInit { deaths: number; record: { progress: number; run: number } | null }
 export type Phase = 'running' | 'dying' | 'paused';
 
+/** Everything needed to carry on the run in progress after a restart (spec §9 `live:snapshot`). */
+export interface WorldSnapshot {
+  tick: number;
+  run: number;
+  runTick: number;
+  deaths: number;
+  record: { progress: number; run: number } | null;
+  phase: Phase;
+  body: Body;
+  dyn: { t: number; crumbles: [number, number][]; chompStart: number | null };
+  maxProgress: number;
+  zone: number;
+}
+
 const DYING_TICKS = Math.round((DEATH_FREEZE_S + DEATH_HOLD_S) * TICK_HZ);
 const IDLE_BLEND: BlendOut = { move: 0, jumpHeld: false, jumpPressed: false, freshHigh: false, pull: 0, pressure: 0, strain: 0 };
 const NEAR_RECORD = 0.05;
@@ -79,6 +93,44 @@ export class World {
       t: 'welcome', levelId: this.level.id, version: this.level.version, deaths: this.deaths,
       record: this.record, run: this.run, zone: this.zone, online,
     };
+  }
+
+  snapshot(): WorldSnapshot {
+    return {
+      tick: this.tick, run: this.run, runTick: this.runTick, deaths: this.deaths, record: this.record ? { ...this.record } : null,
+      phase: this.phase, body: { ...this.body },
+      dyn: { t: this.dyn.t, crumbles: [...this.dyn.crumbles], chompStart: this.dyn.chompStart },
+      maxProgress: this.maxProgress, zone: this.zone,
+    };
+  }
+
+  /**
+   * Carries on from a snapshot: a restart is not a death. A run caught in its death hold
+   * was already counted, so the next run starts fresh.
+   */
+  restore(s: WorldSnapshot): void {
+    this.tick = s.tick;
+    this.deaths = s.deaths;
+    this.record = s.record ? { ...s.record } : null;
+    this.lastBlend = { ...IDLE_BLEND };
+    this.dyingLeft = 0;
+    if (s.phase === 'dying') {
+      this.run = s.run + 1;
+      this.body = createBody(this.level);
+      this.dyn = createDynamics();
+      this.maxProgress = 0;
+      this.zone = 0;
+      this.runTick = 0;
+      this.phase = 'running';
+      return;
+    }
+    this.run = s.run;
+    this.runTick = s.runTick;
+    this.body = { ...s.body };
+    this.dyn = { t: s.dyn.t, crumbles: new Map(s.dyn.crumbles), chompStart: s.dyn.chompStart };
+    this.maxProgress = s.maxProgress;
+    this.zone = s.zone;
+    this.phase = s.phase === 'paused' ? 'paused' : 'running';
   }
 
   private die(cause: NonNullable<ReturnType<typeof stepBody>>, events: ServerEvent[]): void {

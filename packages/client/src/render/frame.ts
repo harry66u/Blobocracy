@@ -25,6 +25,11 @@ let worldT = -1;
 let lastBannerId = 0;
 let hadRecordPop = false;
 
+/** Where the death card wants its "Share the clip" button right now (CSS px), or null. */
+export function deathCardShareSlot() {
+  return hudView.shareSlot;
+}
+
 /** Forget all animation state and cached level chunks (e.g. after the level changes). */
 export function resetRenderer(): void {
   bg = new Background();

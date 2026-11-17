@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5FBFFF">
+<meta name="color-scheme" content="light">
+<title>Hall of fame · Blobocracy</title>
+<meta name="description" content="Every level the whole internet has beaten together in Blobocracy: when it fell, how many deaths it took and the winning run.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Blobocracy">
+<meta property="og:title" content="Hall of fame · Blobocracy">
+<meta property="og:description" content="Levels the whole internet beat together, one shared blob and one shared life at a time.">
+<meta property="og:url" content="/hall">
+<meta property="og:image" content="/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Blobocracy: a yellow blob mid-jump over pink spikes, steered by a swarm of players.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="/og.png">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 6C47 6 58 18 58 35C58 50 47 58 32 58C17 58 6 50 6 35C6 18 17 6 32 6Z' fill='%23FFD21F' stroke='%232A1B3D' stroke-width='5'/%3E%3Cpath d='M12 44C17 54 47 54 53 44C49 55 15 55 12 44Z' fill='%23F2B300'/%3E%3Cellipse cx='23' cy='31' rx='7' ry='8.5' fill='%23fff' stroke='%232A1B3D' stroke-width='3'/%3E%3Cellipse cx='41' cy='31' rx='7' ry='8.5' fill='%23fff' stroke='%232A1B3D' stroke-width='3'/%3E%3Ccircle cx='25' cy='32' r='3.6' fill='%232A1B3D'/%3E%3Ccircle cx='43' cy='32' r='3.6' fill='%232A1B3D'/%3E%3Cpath d='M28 44Q32 47 36 44' fill='none' stroke='%232A1B3D' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/bagel-fat-one-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/atkinson-hyperlegible-next-latin.woff2" as="font" type="font/woff2" crossorigin>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the hall of fame</a>
+<div class="scenery" aria-hidden="true">
+  <div class="sun"></div>
+  <svg class="cloud" style="left:5%;top:150px" viewBox="0 0 150 60"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
+  <svg class="hills" viewBox="0 0 400 100" preserveAspectRatio="none"><path d="M0 60C60 20 110 30 160 55S280 20 400 45V100H0z" fill="#A9DDF7"/><path d="M0 80C70 55 130 70 200 82S330 60 400 74V100H0z" fill="#9AD6F5"/></svg>
+</div>
+<div class="wrap">
+  <header class="top">
+    <a class="logo" href="/" aria-label="Blobocracy, play the game">Blobocracy</a>
+    <nav class="nav" aria-label="Pages">
+      <a href="/runs">Every run</a>
+      <a href="/hall" aria-current="page">Hall of fame</a>
+    </nav>
+    <a class="btn pink play" href="/">Play now</a>
+  </header>
+
+  <section class="hall-hero" aria-labelledby="hall-title">
+    <svg class="trophy" viewBox="0 0 96 96" aria-hidden="true" fill="none" stroke="#2A1B3D" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M28 14h40v18a20 20 0 0 1-40 0z" fill="#FFD21F"/><path d="M28 19H15q0 17 15 18M68 19h13q0 17-15 18"/><path d="M48 52v14" /><path d="M33 84h30l-4-14H37z" fill="#FFD21F"/><path d="M36 21l4 9" stroke="#fff" stroke-width="3.5"/>
+      <path d="M48 26l2.6 5.2 5.7.8-4.1 4 1 5.7-5.2-2.7-5.2 2.7 1-5.7-4.1-4 5.7-.8z" fill="#FF3B7A" stroke-width="2.5"/>
+    </svg>
+    <h1 id="hall-title">Hall of fame</h1>
+    <p>Every level the whole internet has beaten together. One blob, one life, everybody steering at once.</p>
+  </section>
+
+  <main id="main">
+    <div class="notice" id="notice" role="status"></div>
+    <div id="entries" aria-live="polite"></div>
+  </main>
+  <footer>See <a href="/runs">every run so far</a>, or <a href="/">go help the blob</a>.</footer>
+</div>
+<script type="module" src="/src/hall.ts"></script>
+</body>
+</html>

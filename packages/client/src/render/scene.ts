@@ -70,7 +70,12 @@ export interface SceneDeathCard {
   nearRecord: boolean;
   /** Seconds until everyone goes back to the start (shown as "Back to the start in 3"). */
   countdown?: number;
+  /** A clip of this run exists: the card makes room for a "Share the clip" button (an HTML link placed by main.ts). */
+  clip?: boolean;
 }
+
+/** Where the death card's "Share the clip" button goes, in CSS px, following the card's motion. */
+export interface ShareSlot { x: number; y: number; w: number; h: number; rotDeg: number; alpha: number; scale: number }
 
 export interface SceneBanner {
   /** Changes for every new banner (starts the confetti). */
@@ -123,4 +128,4 @@ export interface Scene {
 }
 
 export type { Layout };
-export { renderFrame, resetRenderer } from './frame.ts';
+export { deathCardShareSlot, renderFrame, resetRenderer } from './frame.ts';

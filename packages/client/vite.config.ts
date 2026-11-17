@@ -1,11 +1,12 @@
 import { defineConfig, type Plugin } from 'vite';
 
-/** Clip links (/c/<id>) are served the clip page; in production the edge does the same. */
+/** Clip links (/c/<id>) get the clip page, /runs and /hall their pages; in production the edge does the same. */
 const clipRoutes = (): Plugin => ({
   name: 'clip-routes',
   configureServer(server) {
     server.middlewares.use((req, _res, next) => {
       if (req.url && /^\/c\/[A-Za-z0-9_-]{1,64}\/?(\?.*)?$/.test(req.url)) req.url = '/clip.html';
+      else if (req.url && /^\/(runs|hall)\/?(\?.*)?$/.test(req.url)) req.url = req.url.replace(/^\/(runs|hall)\/?/, '/$1.html');
       next();
     });
   },
@@ -37,6 +38,6 @@ export default defineConfig({
     },
   },
   build: {
-    rollupOptions: { input: { main: 'index.html', preview: 'preview.html', clip: 'clip.html' } },
+    rollupOptions: { input: { main: 'index.html', preview: 'preview.html', clip: 'clip.html', runs: 'runs.html', hall: 'hall.html' } },
   },
 });

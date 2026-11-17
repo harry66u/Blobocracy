@@ -14,6 +14,8 @@ export interface CrowdOptions {
   /** A sampled player gives its dot to a waiting one after this long (when others are waiting). */
   rotateMs?: number;
   identical?: { minGroup?: number; minChanges?: number };
+  /** A player was flagged here (shared with the other relays through Redis when configured). */
+  onFlag?: (sid: string, reason: FlagReason) => void;
 }
 
 interface Player {
@@ -115,13 +117,16 @@ export class EdgeCrowd {
     if (!this.oldestInput || nowMs < this.oldestInput) this.oldestInput = nowMs;
   }
 
-  /** Shadow-ignore a player (weight 0). Remembered by session id for an hour. */
-  flag(id: number, reason: FlagReason): void {
+  /** Shadow-ignore a player (weight 0). Remembered by session id for an hour. `remote`: another relay flagged this session. */
+  flag(id: number, reason: FlagReason, remote = false): void {
     const p = this.players.get(id);
     if (!p || p.flag) return;
     p.flag = reason;
     this.counters.flagged[reason]++;
-    if (p.sid) this.flagsBySid.set(p.sid, { reason, at: Date.now() });
+    if (p.sid) {
+      this.flagsBySid.set(p.sid, { reason, at: Date.now() });
+      if (!remote) this.o.onFlag?.(p.sid, reason);
+    }
     this.unsample(p);
     this.waiting.delete(id);
   }

@@ -4,11 +4,14 @@ import {
   DEFAULT_LINK_SAMPLE, Reservoir, decodeClient, encodePong, encodeSummary,
   type EdgeNotice, type ServerEvent, type SimControl,
 } from '@blobocracy/shared';
+import { gzipSync } from 'node:zlib';
+import { ApiProxy, absolutizeMeta, clipPreview, originOf, simHttpBase, withPreview, type ClipMetaJson } from './api';
 import { FrameGate, LoadMonitor, admit, DEFAULT_LOAD, type AdmitPolicy, type LoadThresholds } from './gate';
 import { BanList, clientIp, ipKey } from './ip';
 import { SimLink } from './link';
 import { EdgeCrowd } from './players';
-import { loadStatic, packedPage, placeholderPage } from './static';
+import { LocalAbuseShare, type AbuseShare } from './shared';
+import { loadStatic, packedPage, placeholderPage, type StaticFile } from './static';
 import { SessionAuthority } from './token';
 
 export interface EdgeOptions {
@@ -44,6 +47,12 @@ export interface EdgeOptions {
   latencyProbe?: boolean;
   load?: Partial<LoadThresholds>;
   summaryHz?: number;
+  /** The sim's internal HTTP (the read API); default derived from simUrl (same host and port). */
+  simHttpUrl?: string;
+  /** Public origin for link previews, e.g. https://blobocracy.com (default: the request's Host). */
+  publicUrl?: string;
+  /** Per-IP counts and flags shared with the other relays (Redis); default: this relay only. */
+  abuse?: AbuseShare;
 }
 
 interface PlayerData { id: number; ip: string; ipk: string; sid: string; watcher: boolean; idx: number }
@@ -61,7 +70,12 @@ const MAX_MESSAGE_BYTES = 64;
 export async function startEdge(o: EdgeOptions) {
   const app = uWS.App();
   const auth = new SessionAuthority({ secret: o.sessionSecret, powBits: o.powBits, tokenTtlS: o.tokenTtlS });
-  const crowd = new EdgeCrowd({ ipVoteCap: o.ipVoteCap ?? 4, rateLimit: o.rateLimit ?? 20, sampleQuota: DEFAULT_LINK_SAMPLE });
+  const abuse = o.abuse ?? new LocalAbuseShare();
+  const crowd = new EdgeCrowd({
+    ipVoteCap: o.ipVoteCap ?? 4, rateLimit: o.rateLimit ?? 20, sampleQuota: DEFAULT_LINK_SAMPLE,
+    onFlag: (sid, reason) => abuse.flag(sid, reason),
+  });
+  const api = new ApiProxy(o.simHttpUrl ?? simHttpBase(o.simUrl));
   const bans = new BanList();
   const gate = new FrameGate();
   const load = new LoadMonitor({ ...DEFAULT_LOAD, ...o.load });
@@ -127,6 +141,7 @@ export async function startEdge(o: EdgeOptions) {
           break;
         case 'resetFlags':
           crowd.resetFlags();
+          abuse.resetFlags();
           break;
         case 'adminRes': {
           const p = adminPending.get(c.id);
@@ -176,7 +191,7 @@ export async function startEdge(o: EdgeOptions) {
       const session = auth.verify(t);
       if (!session) { counters.rejected.token++; res.writeStatus('401 Unauthorized').end('session token required'); return; }
       const ipk = ipKey(ip);
-      if ((ipConns.get(ipk) ?? 0) >= ipConnCap) { counters.rejected.ipCap++; res.writeStatus('429 Too Many Requests').end('too many connections from this address'); return; }
+      if ((ipConns.get(ipk) ?? 0) + abuse.remoteConns(ipk) >= ipConnCap) { counters.rejected.ipCap++; res.writeStatus('429 Too Many Requests').end('too many connections from this address'); return; }
       const role = admit(policy, crowd.stats().connections);
       if (role === 'packed') { counters.rejected.packed++; res.writeStatus('503 Service Unavailable').end('packed'); return; }
       res.upgrade<PlayerData>({ id: nextId++, ip, ipk, sid: session.sid, watcher: role === 'watcher', idx: -1 }, key, proto, ext, context);
@@ -190,6 +205,9 @@ export async function startEdge(o: EdgeOptions) {
       bySid.set(d.sid, ws);
       if (old) { counters.replaced++; old.end(4000, 'replaced by a newer connection'); }
       crowd.add(d.id, d.ip, d.sid, d.watcher);
+      // flagged on another relay within the hour: stays shadow-ignored here too
+      const id = d.id;
+      void abuse.lookupFlag(d.sid).then((reason) => { if (reason && crowd.has(id)) crowd.flag(id, reason, true); });
       ws.subscribe(d.watcher ? 'watch' : 'play');
       ws.subscribe('all');
       if (welcomeText) ws.send(welcomeText, false);
@@ -247,6 +265,18 @@ export async function startEdge(o: EdgeOptions) {
       online: lastOnline, packed: isPacked(), simUp: link.up,
     }, 'public, max-age=10');
   });
+  // the read API (run history, hall of fame, clips): proxied to the sim and cached here
+  app.get('/api/*', (res, req) => {
+    const q = req.getQuery();
+    const key = req.getUrl() + (q ? `?${q}` : '');
+    let aborted = false;
+    res.onAborted(() => { aborted = true; });
+    void api.get(key).then((r) => {
+      if (aborted) return;
+      countSend(r.body.length + 250, 1);
+      res.cork(() => { res.writeStatus(String(r.status)).writeHeader('content-type', r.type).writeHeader('cache-control', r.cache).end(r.body); });
+    });
+  });
   app.get('/healthz', (res) => { json(res, '200 OK', { ok: true, simUp: link.up, connections: sockets.length }); });
 
   let adminSeq = 0;
@@ -271,6 +301,29 @@ export async function startEdge(o: EdgeOptions) {
   app.get('/admin/*', adminRoute);
   app.post('/admin/*', adminRoute);
   app.any('/admin/*', adminRoute);
+  // HTML with absolute preview URLs, per origin (PUBLIC_URL, or each Host the site is reached on)
+  const htmlCache = new Map<string, StaticFile>();
+  const htmlFor = (url: string, f: StaticFile, origin: string, preview?: ClipMetaJson): StaticFile => {
+    const key = `${url}|${origin}|${preview?.id ?? ''}`;
+    let h = htmlCache.get(key);
+    if (!h) {
+      let text = absolutizeMeta(f.body.toString(), origin);
+      if (preview) text = withPreview(text, clipPreview(preview, origin));
+      const body = Buffer.from(text);
+      h = { ...f, body, gzip: gzipSync(body) };
+      if (htmlCache.size > 2000) htmlCache.clear();
+      htmlCache.set(key, h);
+    }
+    return h;
+  };
+  const send = (res: uWS.HttpResponse, f: StaticFile, gzipOk: boolean) => {
+    const gz = f.gzip && gzipOk;
+    const body = gz ? f.gzip! : f.body;
+    countSend(body.length + 250, 1);
+    res.writeHeader('content-type', f.type).writeHeader('cache-control', f.cache);
+    if (gz) res.writeHeader('content-encoding', 'gzip');
+    res.end(body);
+  };
   app.get('/*', (res, req) => {
     let url = req.getUrl();
     if (url === '/' || url === '/index.html') {
@@ -284,15 +337,28 @@ export async function startEdge(o: EdgeOptions) {
       url = '/index.html';
       if (!files.has(url)) { res.writeHeader('content-type', 'text/html; charset=utf-8').end(placeholderPage()); return; }
     }
-    if (/^\/c\/[A-Za-z0-9_-]{1,64}\/?$/.test(url)) url = '/clip.html'; // clip links (milestone 6)
+    if (url === '/runs' || url === '/runs/') url = '/runs.html';
+    else if (url === '/hall' || url === '/hall/') url = '/hall.html';
+    const gzipOk = req.getHeader('accept-encoding').includes('gzip');
+    const origin = originOf(o.publicUrl, req.getHeader('host'), req.getHeader('x-forwarded-proto') === 'http' ? 'http' : 'https');
+    const clip = url.match(/^\/c\/([A-Za-z0-9_-]{1,64})\/?$/);
+    if (clip) {
+      // clip links: the clip page with this clip's title and preview image for link unfurls
+      const page = files.get('/clip.html');
+      if (!page) { res.writeStatus('404 Not Found').end('not found'); return; }
+      let aborted = false;
+      res.onAborted(() => { aborted = true; });
+      void api.get(`/api/clips/${clip[1]}/meta`).then((r) => {
+        if (aborted) return;
+        let meta: ClipMetaJson | undefined;
+        if (r.status === 200) { try { meta = JSON.parse(r.body.toString()) as ClipMetaJson; } catch { /* plain page */ } }
+        res.cork(() => send(res, htmlFor('/clip.html', page, origin, meta), gzipOk));
+      });
+      return;
+    }
     const f = files.get(url);
     if (!f) { res.writeStatus('404 Not Found').end('not found'); return; }
-    const gz = f.gzip && req.getHeader('accept-encoding').includes('gzip');
-    const body = gz ? f.gzip! : f.body;
-    countSend(body.length + 250, 1);
-    res.writeHeader('content-type', f.type).writeHeader('cache-control', f.cache);
-    if (gz) res.writeHeader('content-encoding', 'gzip');
-    res.end(body);
+    send(res, f.type.startsWith('text/html') ? htmlFor(url, f, origin) : f, gzipOk);
   });
   app.any('/*', (res) => { res.writeStatus('404 Not Found').end('not found'); });
 
@@ -338,7 +404,7 @@ export async function startEdge(o: EdgeOptions) {
   const stats = () => ({
     name, simUp: link.up, degraded: load.degraded, cpu: Math.round(cpu * 1000) / 1000, rssMb: Math.round(rssMb),
     backpressure, policy, ips: ipConns.size, ...crowd.stats(), ...counters,
-    bytesSent: bytesTotal, clientToEdgeMs: o.latencyProbe ? clientToEdge.summary() : undefined,
+    bytesSent: bytesTotal, clientToEdgeMs: o.latencyProbe ? clientToEdge.summary() : undefined, apiCache: api.stats(),
     flaggedList: crowd.flaggedList(1000),
   });
   const statsTimer = setInterval(() => { link.send(JSON.stringify({ c: 'stats', stats: stats() })); }, 2000);
@@ -351,10 +417,13 @@ export async function startEdge(o: EdgeOptions) {
     port: uWS.us_socket_local_port(listen),
     name,
     state: () => ({ simUp: link.up, policy, connections: sockets.length, degraded: load.degraded }),
+    /** Sockets per IP key on this relay (published to Redis for the shared cap). */
+    ipConns: () => new Map(ipConns),
     stats,
     stop: async () => {
       clearInterval(summaryTimer); clearInterval(loadTimer); clearInterval(statsTimer);
       link.close();
+      abuse.close();
       for (const p of adminPending.values()) clearTimeout(p.timer);
       uWS.us_listen_socket_close(listen);
       app.close();

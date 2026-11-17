@@ -14,7 +14,8 @@ import { InputState, isGameKey } from './input.ts';
 import { causeName, DEATH_SHAKE, swoopDuration } from './moments.ts';
 import { predict, smooth } from './predict.ts';
 import { mountTouchControls } from './render/touch.ts';
-import { renderFrame, type Scene, type SceneDot } from './render/scene.ts';
+import { deathCardShareSlot, renderFrame, type Scene, type SceneDot } from './render/scene.ts';
+import { ClipBook, mountShareButton, withClip } from './share.ts';
 import { composeScene, sceneBlob, sceneDots, sceneLevelOf, WorldSounds } from './scenemap.ts';
 import { loadMuted, loadReducedMotion, mountHudControls, saveMuted, saveReducedMotion } from './settings.ts';
 import { createCanvasView, loadFonts } from './view.ts';
@@ -42,6 +43,7 @@ const director = new Director(() => reduced, {
   },
 });
 const rig = new CameraRig();
+const clips = new ClipBook();
 
 /** The death being shown: the cause picks the blob's pose; null when not dying. */
 let deathCause: string | null = null;
@@ -83,6 +85,9 @@ function onEvent(e: ServerEvent): void {
       audio.resetToStart(); // the music fades back in
       break;
     }
+    case 'clip':
+      clips.add(e);
+      break;
     case 'zone':
       director.onZone(e.index, e.name, now);
       audio.setZone(e.index);
@@ -126,6 +131,7 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { pos = null; rig.snap(); } // snap to the latest frame on return
 });
 mountTouchControls(document.body, input);
+const share = mountShareButton(document.body);
 
 let pos: { x: number; y: number } | null = null;
 let lastT = performance.now() / 1000;
@@ -189,11 +195,13 @@ function frame(): void {
     showCard: cardRun !== null,
     swoopK, swoopFade: rig.swoopFade, viewCenterX, swoopFromProgress,
   });
+  scene.deathCard = withClip(scene.deathCard, clips);
 
   // While the death card is up inputs don't count; fade the touch buttons so a pit death stays visible.
   document.body.classList.toggle('bl-dying', blob.dead);
 
   renderFrame(view.ctx, L, cam, scene, t);
+  share.place(deathCardShareSlot(), cardRun !== null ? clips.forRun(cardRun) : null);
   audio.tick();
 
   const msg = !net.state.connected && loadingGone ? 'Reconnecting to the blob…' : '';

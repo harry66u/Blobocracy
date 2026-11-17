@@ -241,6 +241,8 @@ export function isServerEvent(v: unknown): v is ServerEvent {
       return isCount(e.run) && isFrac(e.progress);
     case 'reset':
       return isCount(e.run);
+    case 'clip':
+      return typeof e.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(e.id) && KINDS.includes(e.kind as ReplayKind) && isCount(e.run);
     default:
       return false;
   }

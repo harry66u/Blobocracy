@@ -34,14 +34,14 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [ ] Graceful degradation; budget cap at $50/month with alert at $25
 
 ## Milestone 5: history
-- [ ] Postgres + Redis, crash recovery
-- [ ] Run history page
-- [ ] Hall of fame page
+- [x] Postgres + Redis, crash recovery (outage queueing, live snapshot resume, shared abuse state)
+- [x] Run history page (`/runs`)
+- [x] Hall of fame page (`/hall`)
 
 ## Milestone 6: clips
-- [ ] Server-recorded replays on records and near misses
+- [x] Server-recorded replays on records and near misses
 - [~] Clip page; vertical and wide video export; one-tap share (agent working)
-- [ ] Link preview images
+- [x] Link preview images (site image, per-clip images, per-clip tags on `/c/:id`)
 
 ## Milestone 7: win and ship
 - [ ] Win sequence and permanent hall of fame moment

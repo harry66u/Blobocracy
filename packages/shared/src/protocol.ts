@@ -40,7 +40,12 @@ export type ServerEvent =
   | { t: 'death'; run: number; cause: Cause; progress: number; deaths: number; zone: number; nearRecord: boolean }
   | { t: 'zone'; run: number; index: number; name: string }
   | { t: 'record'; run: number; progress: number }
-  | { t: 'reset'; run: number };
+  | { t: 'reset'; run: number }
+  /** A replay clip of `run` was recorded (spec §13); watch it at /c/<id>. */
+  | { t: 'clip'; id: string; kind: 'record' | 'near_miss' | 'win'; run: number };
+
+/** Clip ids: short URL-safe slugs. */
+export const CLIP_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * JSON text notices from the edge relay itself (not world events): whether the relay can reach

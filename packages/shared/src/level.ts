@@ -18,11 +18,17 @@ export type Sky = 'blue' | 'sunset' | 'purple';
  */
 export interface RoomDef { rows: string[]; entities?: Record<string, EntitySpec> }
 
-/** Authoring form of a zone: rooms are concatenated left to right. */
-export interface ZoneDef { name: string; sky: Sky; rooms: (string[] | RoomDef)[] }
+/**
+ * Authoring form of a zone: rooms are concatenated left to right. `gravity` (optional)
+ * scales gravity while the blob is in the zone: 0.6 makes jumps 1/0.6 higher and longer.
+ */
+export interface ZoneDef { name: string; sky: Sky; gravity?: number; rooms: (string[] | RoomDef)[] }
 
-/** A parsed zone, spanning columns `startX` (inclusive) to `endX` (exclusive). */
-export interface Zone { index: number; name: string; sky: Sky; startX: number; endX: number }
+/**
+ * A parsed zone, spanning columns `startX` (inclusive) to `endX` (exclusive).
+ * `gravity` is present only for zones that set one (normal gravity otherwise).
+ */
+export interface Zone { index: number; name: string; sky: Sky; startX: number; endX: number; gravity?: number }
 
 /** A parsed level. Tiles are row-major: `tiles[ty * width + tx]`. */
 export interface Level {
@@ -98,7 +104,8 @@ export function parseLevel(id: number, version: number, zones: ZoneDef[]): Level
       x0 += room[0]!.length;
       roomIndex++;
     }
-    parsedZones.push({ index, name: zone.name, sky: zone.sky, startX, endX: x0 });
+    if (zone.gravity !== undefined && !(zone.gravity > 0)) throw new Error(`zone '${zone.name}' gravity must be positive`);
+    parsedZones.push({ index, name: zone.name, sky: zone.sky, startX, endX: x0, ...(zone.gravity !== undefined ? { gravity: zone.gravity } : {}) });
   });
 
   // Ids follow reading order through the level: left to right, then top to bottom.
@@ -133,8 +140,27 @@ export function zoneAt(level: Level, x: number): Zone {
   return level.zones[level.zones.length - 1]!;
 }
 
+/** The gravity multiplier at world x: its zone's `gravity`, else 1. */
+export function gravityAt(level: Level, x: number): number {
+  return zoneAt(level, x).gravity ?? 1;
+}
+
 /** Run progress at world x: 0 at spawn, 1 at the goal, clamped. */
 export function progressOf(level: Level, x: number): number {
   const p = (x - level.spawn.x) / (level.goalX - level.spawn.x);
   return Math.min(1, Math.max(0, p));
+}
+
+/**
+ * A short fingerprint of a level's geometry and entities (FNV-1a, hex), recorded per
+ * level version (spec §9 `level_versions.geometry_hash`) so a retune is visible in the data.
+ */
+export function levelHash(level: Level): string {
+  let h = 0x811c9dc5;
+  const mix = (b: number) => { h ^= b & 255; h = Math.imul(h, 0x01000193) >>> 0; };
+  mix(level.width); mix(level.width >> 8); mix(level.height);
+  for (let i = 0; i < level.tiles.length; i++) mix(level.tiles[i]!);
+  const ents = JSON.stringify(level.entities);
+  for (let i = 0; i < ents.length; i++) mix(ents.charCodeAt(i));
+  return h.toString(16).padStart(8, '0');
 }

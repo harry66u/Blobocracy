@@ -4,7 +4,7 @@
 import type { Layout } from '../layout.ts';
 import { flipFrame, FLIP_S } from '../moments.ts';
 import { BLOB, CREAM, CREAM_HI, FONT_DISPLAY, FONT_TEXT, HAZARD, INK, ONLINE, type SkyPalette } from './palette.ts';
-import type { SceneDeathCard, SceneHud } from './scene.ts';
+import type { SceneDeathCard, SceneHud, ShareSlot } from './scene.ts';
 
 /** How long the death card takes to leave after the reset. */
 const CARD_OUT_S = 0.35;
@@ -42,6 +42,8 @@ export class HudView {
   private cardT0 = -10;
   private hadCard = false;
   private lastCard: SceneDeathCard | null = null;
+  /** The share button's place on the last drawn death card (null: no card, or no clip). */
+  shareSlot: ShareSlot | null = null;
   private cardOutT0 = -10;
   private reduced = false;
   private readonly widths = new Map<string, number>();
@@ -364,6 +366,7 @@ export class HudView {
   /** The death card: slides in when a card appears, slides out after the reset. */
   drawDeathCard(ctx: CanvasRenderingContext2D, L: Layout, timeS: number): void {
     const card = this.hadCard ? this.lastCard : timeS - this.cardOutT0 < CARD_OUT_S ? this.lastCard : null;
+    this.shareSlot = null;
     if (!card) return;
     const s = uiScale(L) * (L.phone ? 1 : 1.12);
     const reduced = this.reduced;
@@ -380,7 +383,8 @@ export class HudView {
     const lines = wrap(ctx, f15, `of the way, ${card.line}`.replace(/\b(Big|Ceiling) /g, '$1\u00A0'), cw - 44 * s);
     const lh = 21 * s;
     const footer = card.countdown ? `Back to the start in ${card.countdown}` : '';
-    const chh = 128 * s + lines.length * lh + (footer ? 30 * s : 4 * s);
+    const slotH = card.clip ? 60 * s : 0;
+    const chh = 128 * s + lines.length * lh + slotH + (footer ? 30 * s : 4 * s);
     const cy0 = L.phone ? 160 * uiScale(L) : Math.max(170 * uiScale(L), L.h * 0.2);
 
     // in: drop from above the screen with a back-ease and a settling tilt; out: lift away
@@ -390,6 +394,15 @@ export class HudView {
     const tiltDeg = reduced ? -2 : -2 - 7 * (1 - inK) * (1 - inK) + 2.5 * Math.exp(-Math.max(0, t - 0.4) * 5) * Math.sin(Math.max(0, t - 0.4) * 14) * (inK >= 1 ? 1 : 0) + out * 6;
     const alpha = reduced ? Math.min(1, t / 0.3) * (1 - out) : Math.min(1, t / 0.08);
     if (alpha <= 0) return;
+    if (card.clip) {
+      // the slot under the cause line, mapped through the card's tilt and drop
+      const slotY = cy0 + 130 * s + (lines.length - 1) * lh + 14 * s + slotH / 2;
+      const dy = slotY - (cy0 + chh / 2), th = (tiltDeg * Math.PI) / 180;
+      this.shareSlot = {
+        x: mid - dy * Math.sin(th), y: cy0 + chh / 2 + offY + dy * Math.cos(th),
+        w: Math.min(206 * s, cw - 40 * s), h: 44 * s, rotDeg: tiltDeg, alpha, scale: s,
+      };
+    }
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -424,7 +437,7 @@ export class HudView {
     ctx.fillStyle = INK;
     lines.forEach((ln, i) => ctx.fillText(ln, mid, cy0 + 130 * s + i * lh));
     if (footer) {
-      const fy = cy0 + 130 * s + (lines.length - 1) * lh + 30 * s;
+      const fy = cy0 + 130 * s + (lines.length - 1) * lh + 30 * s + slotH;
       ctx.strokeStyle = 'rgba(42,27,61,.18)';
       ctx.lineWidth = 2 * s;
       ctx.setLineDash([2 * s, 5 * s]);

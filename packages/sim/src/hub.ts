@@ -3,6 +3,7 @@ import {
   Reservoir, decodeSummary, isControlText, parseControl, type RelayControl, type ServerEvent, type SimControl,
 } from '@blobocracy/shared';
 import type { AdminRequest, AdminResponse } from './admin';
+import { mountApi, type ApiHandler } from './api';
 import type { Voters } from './crowd';
 import type { Relay } from './relay';
 
@@ -29,6 +30,8 @@ export interface HubOptions {
   secret?: string;
   voters: Voters;
   admin: (req: AdminRequest) => AdminResponse;
+  /** The public read API (/api/*), proxied by the edges. */
+  api?: ApiHandler;
   /** Egress bytes a relay reports (for the budget governor). */
   onBytes: (bytes: number) => void;
   /** Called when the set of relays changes, so policies can be recomputed and pushed. */
@@ -39,7 +42,7 @@ export interface HubOptions {
 
 /**
  * The sim's side of the relay link (spec §4-5): an internal uWS WebSocket server for edge relays,
- * plus the sim's internal HTTP (health check, admin). Relays push input summaries; the sim
+ * plus the sim's internal HTTP (health check, admin, the read API in api.ts). Relays push input summaries; the sim
  * publishes each encoded state frame and event once, and uWS writes it to every relay.
  */
 export function startHub(o: HubOptions): Promise<Relay & {
@@ -145,6 +148,7 @@ export function startHub(o: HubOptions): Promise<Relay & {
       });
     });
   };
+  if (o.api) { const api = o.api; mountApi(app, () => api); }
   app.get('/admin/*', adminRoute);
   app.post('/admin/*', adminRoute);
   app.any('/admin/*', adminRoute);

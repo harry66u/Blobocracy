@@ -37,6 +37,8 @@ export function createAdmin(ctx: {
   control: (c: SimControl) => void;
   onBudget: () => void;
   bans?: Set<string>;
+  /** Called after the ban list changes (persisted with the live snapshot). */
+  onBans?: () => void;
 }) {
   const bans = ctx.bans ?? new Set<string>();
   const pushBans = () => ctx.control({ c: 'bans', cidrs: [...bans] });
@@ -58,6 +60,7 @@ export function createAdmin(ctx: {
         if (!validCidr(cidr)) return { status: 400, body: { error: 'cidr must be an IP or CIDR, e.g. 203.0.113.0/24' } };
         if (route.endsWith('/ban')) bans.add(cidr); else bans.delete(cidr);
         pushBans();
+        ctx.onBans?.();
         return { status: 200, body: { bans: [...bans] } };
       }
       case 'POST /admin/budget': {

@@ -1,5 +1,6 @@
 import uWS from 'uWebSockets.js';
 import { decodeClient, encodePong, type ServerEvent } from '@blobocracy/shared';
+import { mountApi, type ApiHandler } from './api';
 import type { Voters } from './crowd';
 import type { World } from './world';
 
@@ -16,7 +17,7 @@ const MAX_MESSAGE_BYTES = 64;
 interface SocketData { id: number }
 
 /** Serves browsers directly from the sim process: single-process dev mode (`npm run dev`). */
-export function startLocalRelay(opts: { port: number; voters: Voters; world: World; clock: () => number }):
+export function startLocalRelay(opts: { port: number; voters: Voters; world: World; clock: () => number; api?: ApiHandler }):
   Promise<Relay & { port: number }> {
   const { voters, world, clock } = opts;
   let nextId = 1;
@@ -54,6 +55,7 @@ export function startLocalRelay(opts: { port: number; voters: Voters; world: Wor
     },
   });
 
+  if (opts.api) { const api = opts.api; mountApi(app, () => api); }
   // No session service in single-process dev: the client sees 404 on /session and connects without a token.
   app.any('/*', (res) => { res.writeStatus('404 Not Found').end('not found'); });
 

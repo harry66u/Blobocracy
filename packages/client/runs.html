@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5FBFFF">
+<meta name="color-scheme" content="light">
+<title>Every run so far · Blobocracy</title>
+<meta name="description" content="Every attempt the internet has made at Blobocracy, where everyone online steers the same blob with one shared life. Watch it get better.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Blobocracy">
+<meta property="og:title" content="Every run so far · Blobocracy">
+<meta property="og:description" content="Thousands of tries, one shared blob. Watch the internet get better at it, run by run.">
+<meta property="og:url" content="/runs">
+<meta property="og:image" content="/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Blobocracy: a yellow blob mid-jump over pink spikes, steered by a swarm of players.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="/og.png">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 6C47 6 58 18 58 35C58 50 47 58 32 58C17 58 6 50 6 35C6 18 17 6 32 6Z' fill='%23FFD21F' stroke='%232A1B3D' stroke-width='5'/%3E%3Cpath d='M12 44C17 54 47 54 53 44C49 55 15 55 12 44Z' fill='%23F2B300'/%3E%3Cellipse cx='23' cy='31' rx='7' ry='8.5' fill='%23fff' stroke='%232A1B3D' stroke-width='3'/%3E%3Cellipse cx='41' cy='31' rx='7' ry='8.5' fill='%23fff' stroke='%232A1B3D' stroke-width='3'/%3E%3Ccircle cx='25' cy='32' r='3.6' fill='%232A1B3D'/%3E%3Ccircle cx='43' cy='32' r='3.6' fill='%232A1B3D'/%3E%3Cpath d='M28 44Q32 47 36 44' fill='none' stroke='%232A1B3D' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/bagel-fat-one-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/atkinson-hyperlegible-next-latin.woff2" as="font" type="font/woff2" crossorigin>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the runs</a>
+<div class="scenery" aria-hidden="true">
+  <div class="sun"></div>
+  <svg class="cloud" style="left:6%;top:120px" viewBox="0 0 150 60"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
+  <svg class="cloud" style="left:46%;top:60px;width:110px" viewBox="0 0 150 60"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".7"/></svg>
+  <svg class="hills" viewBox="0 0 400 100" preserveAspectRatio="none"><path d="M0 60C60 20 110 30 160 55S280 20 400 45V100H0z" fill="#A9DDF7"/><path d="M0 80C70 55 130 70 200 82S330 60 400 74V100H0z" fill="#9AD6F5"/></svg>
+</div>
+<div class="wrap">
+  <header class="top">
+    <a class="logo" href="/" aria-label="Blobocracy, play the game">Blobocracy</a>
+    <nav class="nav" aria-label="Pages">
+      <a href="/runs" aria-current="page">Every run</a>
+      <a href="/hall">Hall of fame</a>
+    </nav>
+    <a class="btn pink play" href="/">Play now</a>
+  </header>
+
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="stage" aria-hidden="true"><div class="shadow"></div><span id="hero-blob"></span><div class="plat"></div></div>
+    <div>
+      <p class="kicker" id="level-name">Level 1</p>
+      <h1 id="hero-title"><span id="deaths" class="flip">0</span><span class="h-words">deaths so far</span></h1>
+      <p class="lede">Everyone online steers the same blob, and it only has one life. <span class="more">Every one of these runs sent the whole internet back to the start.</span></p>
+      <div class="chips">
+        <span class="chip"><i class="live" aria-hidden="true"></i><b id="online">0</b> playing now</span>
+        <span class="chip rec">Record <b id="record">0%</b> <span id="record-run"></span></span>
+        <span class="chip attempts"><b id="attempts">0</b> attempts</span>
+      </div>
+    </div>
+  </section>
+
+  <main id="main">
+    <div class="notice" id="notice" role="status"></div>
+    <section class="panel" aria-labelledby="chart-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="chart-title">The internet is getting better</h2>
+          <p class="sub">Every dot is one attempt, placed by how far it got. The pink line is the record.</p>
+        </div>
+        <div class="legend" aria-hidden="true"><span><i class="dot"></i>an attempt</span><span><i class="rec"></i>the record</span><span><i class="star"></i>a new record</span></div>
+      </div>
+      <div class="chart" id="chart">
+        <canvas id="chart-canvas" role="img" aria-label="Chart of every run's progress"></canvas>
+        <div class="tip" id="tip" aria-hidden="true"></div>
+      </div>
+      <h3 class="zones-title">How many runs reached each zone</h3>
+      <div class="zones" id="zones"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="list-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="list-title">Every run</h2>
+          <p class="sub" id="list-sub">Newest first.</p>
+        </div>
+        <div class="seg" role="group" aria-label="Which runs">
+          <button type="button" id="f-latest" aria-pressed="true">Latest</button>
+          <button type="button" id="f-best" aria-pressed="false">Best runs</button>
+        </div>
+      </div>
+      <ol class="runs" id="runs" aria-describedby="list-sub">
+        <li class="head" aria-hidden="true"><span>Run</span><span>How far</span><span>What got it</span><span>Lasted</span><span class="h-when">When</span><span></span></li>
+      </ol>
+      <nav class="pager" id="pager" aria-label="Pages of runs"></nav>
+    </section>
+  </main>
+  <footer>Made of one blob and a lot of people. <a href="/">Go help it</a>.</footer>
+</div>
+<script type="module" src="/src/runs.ts"></script>
+</body>
+</html>

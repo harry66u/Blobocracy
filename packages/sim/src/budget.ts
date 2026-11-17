@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type { Redis } from 'ioredis';
 import type { Tier } from '@blobocracy/shared';
 
 /**
@@ -31,7 +32,7 @@ export interface BudgetConfig {
   prices: Prices;
 }
 
-/** What is persisted (JSON file now; Redis in milestone 5 behind the same interface). */
+/** What is persisted (Redis when REDIS_URL is set, else a JSON file or memory). */
 export interface BudgetState {
   /** UTC month, `YYYY-MM`. */
   month: string;
@@ -79,6 +80,20 @@ export class JsonFileStore implements CounterStore {
     const tmp = `${this.path}.${process.pid}.tmp`;
     await writeFile(tmp, JSON.stringify(s));
     await rename(tmp, this.path);
+  }
+}
+
+/** Month-to-date counters in Redis (`budget:state`) when REDIS_URL is set. */
+export class RedisCounterStore implements CounterStore {
+  constructor(private redis: Redis, private key = 'budget:state') {}
+  async load(): Promise<BudgetState | null> {
+    const t = await this.redis.get(this.key);
+    if (!t) return null;
+    try { return JSON.parse(t) as BudgetState; } catch { return null; }
+  }
+  async save(s: BudgetState): Promise<void> {
+    // kept ~3 months so an abandoned key cleans itself up
+    await this.redis.set(this.key, JSON.stringify(s), 'EX', 90 * 24 * 3600);
   }
 }
 

@@ -1,8 +1,8 @@
-// Moving hazards and platforms: the Big Press (crusher), floating movers, saws on rails
-// and the Big Chomp. Positions come from entityState (pure functions of the run clock),
+// Moving hazards and platforms: the Big Press (crusher), floating movers, saws on rails,
+// wind gusts and the Big Chomp. Positions come from entityState (pure functions of the run clock),
 // so the drawing is stateless too: the press's impact dust is a function of how long it
 // has been down. All drawing is in tile units (the caller sets the transform).
-import { CRUSHER_TEETH, entityState, MOVER_THICKNESS, type Chomp, type Crusher, type Entity, type Mover, type Saw } from '@blobocracy/shared';
+import { CRUSHER_TEETH, entityState, MOVER_THICKNESS, windPush, type Chomp, type Crusher, type Entity, type Mover, type Saw, type Wind } from '@blobocracy/shared';
 import type { ViewRect } from './dyntiles.ts';
 import { hash2 } from './level.ts';
 import { CREAM, CREAM_HI, CREAM_SHADE, HAZARD, HAZARD_DARK, INK, mixHex, withAlpha } from './palette.ts';
@@ -37,7 +37,13 @@ export interface EntityDrawCtx {
   night: number;
   /** Where the blob is, for eyes that follow it. */
   focus: { x: number; y: number } | null;
+  /** Reduced motion: wind streaks hold still (they only fade). Defaults to the page's setting. */
+  reduced?: boolean;
 }
+
+/** The settings panel marks reduced motion on <body>; callers may also pass it explicitly. */
+const reducedOf = (d: EntityDrawCtx): boolean =>
+  d.reduced ?? (typeof document !== 'undefined' && !!document.body?.classList.contains('bl-reduced'));
 
 const lineColor = (night: number, a: number) => withAlpha(night > 0.5 ? NIGHT_LINE : INK, a);
 
@@ -47,6 +53,7 @@ function visible(e: Entity, v: ViewRect): boolean {
     case 'mover': return Math.max(e.x, e.x + e.dx) - 1 < v.x1 && Math.min(e.x, e.x + e.dx) + e.w + 1 > v.x0;
     case 'saw': return Math.max(e.x, e.x + e.dx) - e.r - 1 < v.x1 && Math.min(e.x, e.x + e.dx) + e.r + 1 > v.x0;
     case 'chomp': return true;
+    case 'wind': return e.x < v.x1 + 1 && e.x + e.w > v.x0 - 1 && e.y < v.y1 + 1 && e.y + e.h > v.y0 - 1;
   }
 }
 
@@ -67,10 +74,13 @@ export function drawEntitiesBack(g: CanvasRenderingContext2D, entities: readonly
   }
 }
 
-/** Movers, presses and saws. */
+/** Wind, movers, presses and saws. */
 export function drawEntitiesFront(g: CanvasRenderingContext2D, entities: readonly Entity[], d: EntityDrawCtx): void {
   g.lineCap = 'round';
   g.lineJoin = 'round';
+  for (const e of entities) {
+    if (e.kind === 'wind' && visible(e, d.view)) drawWind(g, e, d);
+  }
   for (const e of entities) {
     if (e.kind === 'mover' && visible(e, d.view)) drawMover(g, e, d);
   }
@@ -527,6 +537,114 @@ function drawSaw(g: CanvasRenderingContext2D, e: Saw, d: EntityDrawCtx): void {
   g.beginPath();
   g.arc(x, y, rIn * 0.7, Math.PI * 1.08, Math.PI * 1.42);
   g.stroke();
+}
+
+// ---- wind ----------------------------------------------------------------------
+
+/** Streaks travel this fast (tiles/s) while a gust blows; the push itself is in the physics. */
+const STREAK_SPEED = 11;
+/** Streaks start stirring this long before a gust, so the crowd sees it coming. */
+const WIND_WARN_S = 0.6;
+const LEAF = '#8CCB5E';
+const LEAF_DARK = '#4E8F3A';
+
+/** 0..1: how hard the region blows now, relative to its full gust. */
+export function windStrength(e: Wind, runTime: number): number {
+  return e.push === 0 ? 0 : Math.abs(windPush(e, runTime) / e.push);
+}
+
+/** 0..1 over the last WIND_WARN_S before the next gust starts (0 while it blows). */
+export function windWarning(e: Wind, runTime: number): number {
+  let c = (runTime / e.period + e.phase) % 1;
+  if (c < 0) c += 1;
+  const toGust = (1 - c) * e.period;
+  return toGust < WIND_WARN_S ? 1 - toGust / WIND_WARN_S : 0;
+}
+
+export interface WindStreak { x: number; y: number; len: number; dir: 1 | -1; alpha: number; curl: number }
+export interface WindLeaf { x: number; y: number; spin: number; alpha: number }
+
+/**
+ * Where the streaks and leaves of a wind region are: a pure function of the run clock (how
+ * hard it blows) and wall time (how far they have drifted). With `reduced`, nothing drifts:
+ * the streaks sit still and fade with the gust, and there are no tumbling leaves.
+ */
+export function windParticles(e: Wind, runTime: number, timeS: number, reduced: boolean): { streaks: WindStreak[]; leaves: WindLeaf[] } {
+  const k = windStrength(e, runTime);
+  const warn = windWarning(e, runTime);
+  // a faint hint of which way it will blow even when calm, stirring just before a gust
+  const show = Math.max(k, 0.16 + 0.3 * warn);
+  const dir: 1 | -1 = e.push < 0 ? -1 : 1;
+  const travel = reduced ? 0 : timeS * STREAK_SPEED * (0.35 + 0.65 * k) * dir;
+  const streaks: WindStreak[] = [];
+  const leaves: WindLeaf[] = [];
+  const n = Math.max(3, Math.min(48, Math.round((e.w * e.h) / 9)));
+  const seed = e.id * 31 + 7;
+  for (let i = 0; i < n; i++) {
+    const hx = hash2(i, seed, 101), hy = hash2(i, seed, 202), hl = hash2(i, seed, 303);
+    let fx = (hx * e.w + travel * (0.8 + 0.4 * hl)) % e.w;
+    if (fx < 0) fx += e.w;
+    const len = (0.9 + 1.4 * hl) * (0.45 + 0.55 * show);
+    // fade in and out at the region's ends so streaks never pop
+    const edge = Math.min(1, fx / 1.5, (e.w - fx) / 1.5);
+    const y = e.y + 0.6 + hy * Math.max(0.2, e.h - 1.2) + (reduced ? 0 : Math.sin(timeS * 3 + i) * 0.08 * k);
+    streaks.push({ x: e.x + fx, y, len, dir, alpha: Math.max(0, edge) * show * (0.45 + 0.35 * hl), curl: hash2(i, seed, 404) < 0.4 ? 1 : 0 });
+  }
+  if (!reduced && k > 0.05) {
+    const nl = Math.max(1, Math.round(n / 6));
+    for (let i = 0; i < nl; i++) {
+      const hx = hash2(i, seed, 505), hy = hash2(i, seed, 606);
+      let fx = (hx * e.w + timeS * STREAK_SPEED * 0.7 * dir) % e.w;
+      if (fx < 0) fx += e.w;
+      const edge = Math.min(1, fx / 1.5, (e.w - fx) / 1.5);
+      const y = e.y + 1 + hy * Math.max(0.2, e.h - 2) + Math.sin(timeS * 4.3 + i * 2.1) * 0.5;
+      leaves.push({ x: e.x + fx, y, spin: timeS * 7 * dir + i, alpha: Math.max(0, edge) * k });
+    }
+  }
+  return { streaks, leaves };
+}
+
+function drawWind(g: CanvasRenderingContext2D, e: Wind, d: EntityDrawCtx): void {
+  const { streaks, leaves } = windParticles(e, d.runTime, d.timeS, reducedOf(d));
+  const light = d.night > 0.5 ? NIGHT_LINE : CREAM_HI;
+  g.lineWidth = 0.09;
+  for (const s of streaks) {
+    if (s.alpha < 0.02) continue;
+    if (s.y < d.view.y0 - 1 || s.y > d.view.y1 + 1) continue;
+    const tail = s.x - s.len * s.dir;
+    g.strokeStyle = withAlpha(light, Math.min(1, s.alpha));
+    g.beginPath();
+    g.moveTo(s.x, s.y);
+    if (s.curl) {
+      // a cartoon swoosh: a line that curls back over itself at the tail
+      g.lineTo(tail, s.y);
+      g.arc(tail, s.y - 0.22, 0.22, Math.PI / 2, s.dir > 0 ? Math.PI * 1.75 : -Math.PI * 0.75, s.dir > 0);
+    } else {
+      g.quadraticCurveTo((s.x + tail) / 2, s.y - 0.12, tail, s.y + 0.04);
+    }
+    g.stroke();
+  }
+  for (const l of leaves) {
+    if (l.alpha < 0.05) continue;
+    g.save();
+    g.globalAlpha *= Math.min(1, l.alpha);
+    g.translate(l.x, l.y);
+    g.rotate(l.spin);
+    g.beginPath();
+    g.moveTo(-0.22, 0);
+    g.quadraticCurveTo(0, -0.17, 0.22, 0);
+    g.quadraticCurveTo(0, 0.17, -0.22, 0);
+    g.fillStyle = LEAF;
+    g.fill();
+    g.lineWidth = 0.05;
+    g.strokeStyle = LEAF_DARK;
+    g.stroke();
+    g.beginPath();
+    g.moveTo(-0.18, 0);
+    g.lineTo(0.16, 0);
+    g.stroke();
+    g.restore();
+  }
 }
 
 // ---- the Big Chomp -------------------------------------------------------------

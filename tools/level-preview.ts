@@ -1,6 +1,7 @@
-// Renders the whole of LEVEL1 as one image (stacked rows, zone skies and names) using the
+// Renders a whole level (default 1) as one image (stacked rows, zone skies and names) using the
 // real renderer, via packages/client/level-preview.html.
-// Usage: npx tsx tools/level-preview.ts [out.png] [--tile=14] [--rows=N] [--t=<run time>]
+// Usage: npx tsx tools/level-preview.ts [out.png] [--level=1] [--tile=14] [--rows=N] [--t=<run time>]
+// The default output is tools/out/level<id>-overview.png.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -12,8 +13,9 @@ import { fileURLToPath } from 'node:url';
 const { chromium } = createRequire(import.meta.url)('playwright') as typeof import('playwright');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
-const out = resolve(args.find((a) => !a.startsWith('--')) ?? join(root, 'tools', 'out', 'level1-overview.png'));
-const q = new URLSearchParams();
+const levelId = Number(args.find((a) => a.startsWith('--level='))?.slice(8) ?? 1);
+const out = resolve(args.find((a) => !a.startsWith('--')) ?? join(root, 'tools', 'out', `level${levelId}-overview.png`));
+const q = new URLSearchParams({ level: String(levelId) });
 for (const k of ['tile', 'rows', 't']) {
   const v = args.find((a) => a.startsWith(`--${k}=`));
   if (v) q.set(k, v.slice(k.length + 3));

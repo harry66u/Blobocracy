@@ -1,9 +1,9 @@
 import type { Control } from './blend';
 import { DT, PHYS } from './constants';
 import { crumbleGone, type Dynamics } from './dynamics';
-import { CRUSHER_TEETH, MOVER_THICKNESS, entityState, type EntityState } from './entities';
+import { CRUSHER_TEETH, MOVER_THICKNESS, entityState, windPush, type EntityState } from './entities';
 import {
-  tileAt, T_CONVEYOR_L, T_CONVEYOR_R, T_CRUMBLE, T_ONEWAY, T_SOLID, T_SPIKE_DOWN, T_SPIKE_UP, T_SPRING, type Level,
+  gravityAt, tileAt, T_CONVEYOR_L, T_CONVEYOR_R, T_CRUMBLE, T_ONEWAY, T_SOLID, T_SPIKE_DOWN, T_SPIKE_UP, T_SPRING, type Level,
 } from './level';
 
 /** Hazard names used in death messages (spec §6.5). 'press' is the Big Press (crusher). */
@@ -42,11 +42,13 @@ const CULL_TILES = 24;
 interface Plat { x0: number; x1: number; px0: number; px1: number; top0: number; top1: number }
 interface Rect { l: number; r: number; t: number; b: number }
 interface Circle { x: number; y: number; r: number }
+/** A wind region and how hard it blows this step (tiles/s, positive = right). */
+interface Gust extends Rect { push: number }
 /** Entity geometry for one step: at its start (t0) and end (t1). */
-interface Ents { plats: Plat[]; solids: Rect[]; press: Rect[]; saws: Circle[] }
+interface Ents { plats: Plat[]; solids: Rect[]; press: Rect[]; saws: Circle[]; winds: Gust[] }
 interface Ctx { level: Level; dyn: Dynamics | undefined; ents: Ents }
 
-const NO_ENTS: Ents = { plats: [], solids: [], press: [], saws: [] };
+const NO_ENTS: Ents = { plats: [], solids: [], press: [], saws: [], winds: [] };
 
 /** Whether a tile blocks from every side. Crumbles block until they give way. */
 function solidAt(ctx: Ctx, tx: number, ty: number): boolean {
@@ -112,9 +114,15 @@ function layOut(level: Level, dyn: Dynamics, bx: number): Ents {
   const t0 = dyn.t;
   dyn.t += DT;
   const t1 = dyn.t;
-  const ents: Ents = { plats: [], solids: [], press: [], saws: [] };
+  const ents: Ents = { plats: [], solids: [], press: [], saws: [], winds: [] };
   for (const e of level.entities) {
     if (e.kind === 'chomp') continue;
+    if (e.kind === 'wind') {
+      if (bx < e.x || bx >= e.x + e.w) continue;
+      const push = windPush(e, t1);
+      if (push !== 0) ents.winds.push({ l: e.x, r: e.x + e.w, t: e.y, b: e.y + e.h, push });
+      continue;
+    }
     const reach = e.kind === 'saw' ? e.r + Math.abs(e.dx) : e.w + (e.kind === 'mover' ? Math.abs(e.dx) : 0);
     if (Math.abs(e.x - bx) > CULL_TILES + reach) continue;
     const s1 = entityState(e, t1);
@@ -234,6 +242,15 @@ function conveyorPush(level: Level, b: Body): number {
   return (r - l) * PHYS.conveyorSpeed;
 }
 
+/** Extra target speed from wind regions holding the body's center. */
+function windPushAt(b: Body, ctx: Ctx): number {
+  let push = 0;
+  for (const w of ctx.ents.winds) {
+    if (b.x >= w.l && b.x < w.r && b.y >= w.t && b.y < w.b) push += w.push;
+  }
+  return push;
+}
+
 /** The spike the body touches, if any, using the inset spike hitboxes. */
 function spikeHit(b: Body, level: Level): Cause | null {
   const left = b.x - PHYS.halfW, right = b.x + PHYS.halfW;
@@ -274,8 +291,8 @@ function entityHit(b: Body, ctx: Ctx): Cause | null {
 /**
  * Advances the body by exactly one `DT` under control `c`, mutating it.
  * With `dyn`, also advances the run clock (`dyn.t += DT`) and plays the time-based features:
- * crumbles give way, movers carry, crushers, saws and the Big Chomp kill. Without it, crumbles
- * never give way and entities are ignored.
+ * crumbles give way, movers carry, wind gusts push, crushers, saws and the Big Chomp kill.
+ * Without it, crumbles never give way and entities are ignored. Zone gravity applies either way.
  * Returns the cause of death if the body died this step, else null.
  */
 export function stepBody(b: Body, c: Control, level: Level, dyn?: Dynamics): Cause | null {
@@ -299,12 +316,16 @@ export function stepBody(b: Body, c: Control, level: Level, dyn?: Dynamics): Cau
   if (c.move > 0) b.facing = 1;
   else if (c.move < 0) b.facing = -1;
   const accel = b.grounded ? PHYS.accelGround : PHYS.accelAir;
-  b.vx = approach(b.vx, PHYS.runSpeed * c.move + conveyorPush(level, b), accel * DT);
+  let target = PHYS.runSpeed * c.move + conveyorPush(level, b);
+  const wind = windPushAt(b, ctx);
+  if (wind !== 0) target += wind;
+  b.vx = approach(b.vx, target, accel * DT);
   moveX(b, ctx, b.vx * DT, true);
 
-  // Vertical: exact integration under constant gravity (average of old and new velocity).
+  // Vertical: exact integration under constant gravity (average of old and new velocity),
+  // scaled by the zone's gravity where the blob is (low-gravity zones).
   const vy0 = b.vy;
-  const vy1 = Math.min(vy0 + PHYS.gravity * DT, PHYS.maxFall);
+  const vy1 = Math.min(vy0 + PHYS.gravity * gravityAt(level, b.x) * DT, PHYS.maxFall);
   b.vy = vy1;
   const wasGrounded = b.grounded;
   const how = moveY(b, ctx, ((vy0 + vy1) / 2) * DT);

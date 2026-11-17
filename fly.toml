@@ -10,6 +10,14 @@
 #   RELAY_SECRET          both  shared secret relays present to the sim link (header x-relay-secret).
 #   ADMIN_TOKEN           sim   bearer token for /admin/* (stats, ban IP/CIDR, raise budget, reset flags). Unset = admin off.
 #   ALERT_WEBHOOK_URL     sim   POSTed JSON budget alerts (Discord/Slack compatible). Unset = alerts only logged.
+#   DATABASE_URL          sim   Postgres (Neon/Supabase free tier): runs, clips, hall of fame, levels + level_versions,
+#                               the world row. Migrations in packages/sim/migrations run on boot (idempotent).
+#                               Unset = history kept in memory only. If Postgres goes away the game keeps going and
+#                               writes queue in memory until it is back (spec §10).
+#   REDIS_URL             both  sim: the live snapshot `live:snapshot` (resume the run in progress after a restart)
+#                               and the budget counters `budget:state`; edges: per-IP socket counts across relays and
+#                               shadow-ban flags by session. Unset = sim uses LIVE_STATE_FILE / BUDGET_STATE_FILE (or
+#                               memory) and each edge keeps its own counts.
 # Sim:
 #   LOCAL_RELAY=0               no in-process browser relay (that is single-process dev mode only)
 #   SIM_LINK_PORT / _HOST       relay link + internal HTTP (health, admin); listen on "::" for 6PN
@@ -20,7 +28,10 @@
 #   PRICE_EDGE_HOURLY_USD       $/h per connected relay unless the relay reports MACHINE_HOURLY_USD
 #   PRICE_FIXED_MONTHLY_USD     always-on extras prorated by the calendar (Redis machine + volumes ≈ 2.35)
 #   EGRESS_USD_PER_GB           0.02 (North America)
-#   BUDGET_STATE_FILE           month-to-date counters (JSON on the sim volume; Redis in milestone 5)
+#   BUDGET_STATE_FILE           month-to-date counters as JSON on the sim volume, when REDIS_URL is unset
+#   LIVE_STATE_FILE             the live snapshot as JSON on the sim volume, when REDIS_URL is unset
+#   FONTS_DIR                   game fonts for per-clip preview images (default: the built client's fonts)
+#   SEED_DEMO_RUNS              dev only: fill the in-memory history with N fake runs (refused with DATABASE_URL)
 #   ALWAYS_ON_RELAYS            how many relays count as always-on capacity (1 = min_machines_running)
 #   EDGE_CAPACITY               players per always-on relay before the 90%/100% tiers turn newcomers into
 #                               watchers / the packed page; keep equal to the edge soft_limit below
@@ -36,6 +47,8 @@
 #   MACHINE_HOURLY_USD          this relay's $/h for the governor (set per machine for performance-class extras)
 #   EGRESS_OVERHEAD_BYTES       per-message WebSocket+TLS+TCP/IP overhead counted as egress (80)
 #   STATIC_DIR                  built client (default packages/client/dist)
+#   PUBLIC_URL                  e.g. https://blobocracy.com: the origin in link previews (default: the request's Host)
+#   SIM_HTTP_URL                the sim's internal HTTP for /api/* (default: SIM_URL's host and port over http)
 #   TRUST_TEST_IP_HEADER        load tests only; the edge refuses to start with it in production
 #   LATENCY_PROBE               load tests only
 #
@@ -76,6 +89,7 @@ kill_timeout = "10s"
   PRICE_FIXED_MONTHLY_USD = "2.35"
   EGRESS_USD_PER_GB = "0.02"
   BUDGET_STATE_FILE = "/data/budget.json"
+  LIVE_STATE_FILE = "/data/live.json"
   ALWAYS_ON_RELAYS = "1"
   EDGE_CAPACITY = "1500"
   POW_DIFFICULTY = "14"
@@ -117,7 +131,7 @@ kill_timeout = "10s"
     timeout = "2s"
     grace_period = "10s"
 
-# Month-to-date budget counters survive sim restarts and deploys.
+# Month-to-date budget counters and the live snapshot survive sim restarts and deploys even without Redis.
 [[mounts]]
   processes = ["sim"]
   source = "sim_data"

@@ -176,4 +176,47 @@ describe('sim + two edges', () => {
     expect(await (await fetch(`http://127.0.0.1:${a.port}/c/AbC123`)).text()).toContain('clip');
     expect((await fetch(`http://127.0.0.1:${a.port}/nope.js`)).status).toBe(404);
   });
+
+  test('history API and pages through an edge: proxied, cached, clip links unfurl with the clip', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dist-'));
+    const head = '<meta property="og:image" content="/og.png"><meta property="og:url" content="/runs">';
+    writeFileSync(join(dir, 'runs.html'), `<html><head><title>Runs</title>${head}</head><body>runs</body></html>`);
+    writeFileSync(join(dir, 'hall.html'), `<html><head><title>Hall</title>${head}</head><body>hall</body></html>`);
+    writeFileSync(join(dir, 'clip.html'), `<html><head><title>Blobocracy clip</title><meta property="og:title" content="Blobocracy clip"></head><body>clip</body></html>`);
+    const { MemoryStore } = await import('../../sim/src/store');
+    const store = new MemoryStore();
+    await store.saveClip({ id: 'Qx7_ab', levelId: 1, levelVersion: 1, run: 4812, kind: 'near_miss', createdAt: 0, progress: 0.78, cause: 'press', deaths: 4812, replay: new Uint8Array([1, 2, 3]), og: new Uint8Array([137, 80, 78, 71]) });
+    await store.recordRun({ levelId: 1, levelVersion: 1, run: 1, startedAt: 0, endedAt: 1, durationMs: 1, maxProgress: 0.1, maxX: 1, zoneReached: 0, cause: 'pit', peakPlayers: 1, clipId: null });
+    const s = await sim({ store });
+    const a = await edge(s, { staticDir: dir, publicUrl: 'https://blobocracy.example' });
+    const base = `http://127.0.0.1:${a.port}`;
+
+    const sum = await fetch(`${base}/api/summary`);
+    expect(sum.status).toBe(200);
+    expect((await sum.json()).attempts).toBe(1);
+    await fetch(`${base}/api/summary`);
+    expect(a.stats().apiCache.hits).toBeGreaterThanOrEqual(1);
+    expect((await (await fetch(`${base}/api/runs?page=1&best=1`)).json()).runs[0].run).toBe(1);
+    expect((await (await fetch(`${base}/api/counter`)).json())).toHaveProperty('deaths');
+
+    const bin = await fetch(`${base}/api/clips/Qx7_ab`);
+    expect(bin.headers.get('cache-control')).toContain('immutable');
+    expect([...new Uint8Array(await bin.arrayBuffer())]).toEqual([1, 2, 3]);
+    expect((await fetch(`${base}/api/clips/missing`)).status).toBe(404);
+
+    const runs = await (await fetch(`${base}/runs`)).text();
+    expect(runs).toContain('runs');
+    expect(runs).toContain('content="https://blobocracy.example/og.png"');
+    expect(await (await fetch(`${base}/hall`)).text()).toContain('hall');
+
+    const page = await (await fetch(`${base}/c/Qx7_ab`)).text();
+    expect(page).toContain('<title>So close. Run 4,812 made it 78%…</title>');
+    expect(page).toContain('<meta property="og:image" content="https://blobocracy.example/api/clips/Qx7_ab/og.png">');
+    expect(page).toContain('<meta property="og:url" content="https://blobocracy.example/c/Qx7_ab">');
+    expect(page).toContain('<meta name="twitter:card" content="summary_large_image">');
+    expect(page.match(/og:title/g)).toHaveLength(1);
+    expect(page).toContain('clip</body>');
+    // an unknown clip still gets the (generic) clip page
+    expect(await (await fetch(`${base}/c/nope123`)).text()).toContain('<title>Blobocracy clip</title>');
+  });
 });

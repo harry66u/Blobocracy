@@ -1,8 +1,8 @@
-// Level overview: the whole of LEVEL1 drawn by the real renderer (ground chunks, dynamic
+// Level overview: the whole of a level (default LEVEL1) drawn by the real renderer (ground chunks, dynamic
 // tiles, entities) at a small tile size, cut into stacked rows with each zone's sky
 // behind it and its name on top. Used by tools/level-preview.ts.
-// Query params: ?tile=<px per tile, default 14>  &rows=<row count>  &t=<run time for entities>
-import { LEVEL1, tileAt as levelTileAt } from '@blobocracy/shared';
+// Query params: ?level=<id, default 1>  &tile=<px per tile, default 14>  &rows=<row count>  &t=<run time for entities>
+import { LEVEL1, LEVELS, tileAt as levelTileAt } from '@blobocracy/shared';
 import './fonts.css';
 import { DynamicTiles } from './render/dyntiles.ts';
 import { drawChomp, drawEntitiesBack, drawEntitiesFront, solidOf, type EntityDrawCtx } from './render/entities.ts';
@@ -12,7 +12,7 @@ import type { SceneLevel } from './render/scene.ts';
 import { loadFonts } from './view.ts';
 
 const P = new URLSearchParams(location.search);
-const level = LEVEL1;
+const level = LEVELS.find((l) => l.id === Number(P.get('level') ?? 1)) ?? LEVEL1;
 const T = Number(P.get('tile') ?? 14);
 const runTime = Number(P.get('t') ?? 0);
 const ROWS = Number(P.get('rows') ?? Math.max(1, Math.min(6, Math.round(level.width / 240))));
