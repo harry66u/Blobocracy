@@ -1,3 +1,5 @@
+// EXPERIMENTAL: the absolute numbers are not trustworthy yet (moments can show 0 ms windows that are
+// artefacts of how the solver played the route). Use real run history (/runs) to tune difficulty.
 // Level difficulty report. Takes the solver's route through LEVEL1 and, for every input
 // change on it, measures how early and how late that change could be made and still survive
 // (its timing window). A crowd aims at the middle of each window and its timing spreads with
