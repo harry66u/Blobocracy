@@ -133,7 +133,7 @@ export function startHub(o: HubOptions): Promise<Relay & {
   };
 
   app.get('/healthz', (res) => { res.writeHeader('content-type', 'application/json').end(JSON.stringify({ ok: true, relays: relays.size })); });
-  app.any('/admin/*', (res, req) => {
+  const adminRoute = (res: uWS.HttpResponse, req: uWS.HttpRequest) => {
     const method = req.getMethod(), path = req.getUrl(), auth = req.getHeader('authorization');
     let aborted = false;
     res.onAborted(() => { aborted = true; });
@@ -144,7 +144,10 @@ export function startHub(o: HubOptions): Promise<Relay & {
         res.writeStatus(String(out.status)).writeHeader('content-type', 'application/json').end(JSON.stringify(out.body));
       });
     });
-  });
+  };
+  app.get('/admin/*', adminRoute);
+  app.post('/admin/*', adminRoute);
+  app.any('/admin/*', adminRoute);
   app.any('/*', (res) => { res.writeStatus('404 Not Found').end('not found'); });
 
   return new Promise((resolve, reject) => {

@@ -56,6 +56,7 @@ function client(port: number, tok: string | null, ip = '198.51.100.1'): Promise<
       } else { const d = decodeServer(m.data as ArrayBuffer); if (d && 'tick' in d) c.frames.push(d); }
     };
     ws.onclose = () => { c.closed = true; if (!c.opened) reject(new Error('rejected')); };
+    ws.onerror = () => { if (!c.opened) reject(new Error('rejected')); }; // undici fires no close after a refused handshake
     ws.onopen = () => { c.opened = true; resolve(c); };
   });
 }

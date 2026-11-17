@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import uWS from 'uWebSockets.js';
 import {
-  DEFAULT_LINK_SAMPLE, MSG_STATE, Reservoir, decodeClient, encodePong, encodeSummary,
+  DEFAULT_LINK_SAMPLE, Reservoir, decodeClient, encodePong, encodeSummary,
   type EdgeNotice, type ServerEvent, type SimControl,
 } from '@blobocracy/shared';
 import { FrameGate, LoadMonitor, admit, DEFAULT_LOAD, type AdmitPolicy, type LoadThresholds } from './gate';
@@ -251,7 +251,8 @@ export async function startEdge(o: EdgeOptions) {
 
   let adminSeq = 0;
   const adminPending = new Map<number, { res: uWS.HttpResponse; timer: ReturnType<typeof setTimeout>; aborted: boolean }>();
-  app.any('/admin/*', (res, req) => {
+  // uWS prefers method routes over `any`, so GET /admin/* must be registered explicitly ahead of GET /*.
+  const adminRoute = (res: uWS.HttpResponse, req: uWS.HttpRequest) => {
     const method = req.getMethod(), path = req.getUrl(), authz = req.getHeader('authorization');
     const p = { res, timer: undefined as unknown as ReturnType<typeof setTimeout>, aborted: false };
     res.onAborted(() => { p.aborted = true; });
@@ -266,7 +267,10 @@ export async function startEdge(o: EdgeOptions) {
       }, 5000);
       adminPending.set(id, p);
     });
-  });
+  };
+  app.get('/admin/*', adminRoute);
+  app.post('/admin/*', adminRoute);
+  app.any('/admin/*', adminRoute);
   app.get('/*', (res, req) => {
     let url = req.getUrl();
     if (url === '/' || url === '/index.html') {
@@ -356,4 +360,3 @@ export async function startEdge(o: EdgeOptions) {
   };
 }
 
-export { MSG_STATE };

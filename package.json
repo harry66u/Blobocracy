@@ -8,10 +8,16 @@
   "scripts": {
     "test": "vitest run",
     "test:level": "vitest run --mode slow",
-    "typecheck": "tsc -p packages/shared && tsc -p packages/sim && tsc -p packages/client",
+    "typecheck": "tsc -p packages/shared && tsc -p packages/sim && tsc -p packages/edge && tsc -p packages/bots && tsc -p packages/client",
     "dev:server": "tsx watch packages/sim/src/main.ts",
     "dev:client": "vite packages/client",
-    "dev": "node tools/dev.mjs"
+    "dev": "node tools/dev.mjs",
+    "dev:split": "node tools/dev-split.mjs",
+    "sim": "tsx packages/sim/src/main.ts",
+    "edge": "tsx packages/edge/src/main.ts",
+    "build": "vite build packages/client",
+    "bots": "tsx packages/bots/src/main.ts",
+    "loadtest": "tsx tools/loadtest.ts"
   },
   "engines": {
     "node": ">=22"

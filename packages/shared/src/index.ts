@@ -9,3 +9,4 @@ export * from './levels/level1';
 export * from './pow';
 export * from './link';
 export * from './stats';
+export * from './replay';
