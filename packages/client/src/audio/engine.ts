@@ -46,6 +46,8 @@ export interface GameAudioOptions {
   music?: boolean;
   /** Run the scheduler on an internal timer; defaults to true for a real-time context. */
   timers?: boolean;
+  /** Where the mix goes instead of the context's speakers (e.g. a MediaStream destination for recording). */
+  destination?: AudioNode;
 }
 
 const VOLUME = 0.9;
@@ -109,12 +111,12 @@ interface Graph {
   saw: { gain: GainNode; oscs: OscillatorNode[] } | null;
 }
 
-function buildGraph(ctx: BaseAudioContext, rng: () => number, muted: boolean): Graph {
+function buildGraph(ctx: BaseAudioContext, rng: () => number, muted: boolean, out: AudioNode = ctx.destination): Graph {
   const kit = makeKit(ctx, rng);
   const g = (v: number) => { const n = ctx.createGain(); n.gain.value = v; return n; };
 
   const master = g(muted ? 0 : VOLUME);
-  master.connect(ctx.destination);
+  master.connect(out);
   const limiter = ctx.createDynamicsCompressor();
   limiter.threshold.value = -2;
   limiter.knee.value = 0;
@@ -244,7 +246,7 @@ export function createGameAudio(opts: GameAudioOptions = {}): GameAudio {
         ctx = new Ctor({ latencyHint: 'interactive' });
       }
       realtime = typeof AudioContext !== 'undefined' && ctx instanceof AudioContext;
-      gr = buildGraph(ctx, rng, muted);
+      gr = buildGraph(ctx, rng, muted, opts.destination);
       applyCrowd();
     } catch {
       failed = true;

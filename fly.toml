@@ -1,0 +1,135 @@
+# Blobocracy on Fly.io: DRAFT for milestone 7, nothing has been deployed.
+# One app, one image, two process groups (spec §4, §10):
+#   sim   exactly one machine, always on, no public ports. Physics, voting, budget governor.
+#   edge  the public relays: min 1 always running, more started by Fly's proxy past the soft limit.
+# Edges reach the sim over Fly's private network (6PN) at sim.process.<app>.internal:8081.
+#
+# ── Environment variables ─────────────────────────────────────────────────────────────────────
+# Secrets (fly secrets set NAME=value, never in this file):
+#   SESSION_SECRET        edge  HMAC key for proof-of-work challenges and session tokens (same on every edge). Required.
+#   RELAY_SECRET          both  shared secret relays present to the sim link (header x-relay-secret).
+#   ADMIN_TOKEN           sim   bearer token for /admin/* (stats, ban IP/CIDR, raise budget, reset flags). Unset = admin off.
+#   ALERT_WEBHOOK_URL     sim   POSTed JSON budget alerts (Discord/Slack compatible). Unset = alerts only logged.
+# Sim:
+#   LOCAL_RELAY=0               no in-process browser relay (that is single-process dev mode only)
+#   SIM_LINK_PORT / _HOST       relay link + internal HTTP (health, admin); listen on "::" for 6PN
+#   BUDGET_MODE                 cap | alert (client decision: cap)
+#   MONTHLY_BUDGET_USD          50 (client decision); raise live: POST /admin/budget {"monthlyUsd": 80}
+#   BUDGET_ALERT_USD            25 (client decision); alerts also fire at 50/70/90/100% of the budget
+#   PRICE_SIM_HOURLY_USD        $/h of the sim machine (shared-cpu-1x 512 MB ≈ 0.00507)
+#   PRICE_EDGE_HOURLY_USD       $/h per connected relay unless the relay reports MACHINE_HOURLY_USD
+#   PRICE_FIXED_MONTHLY_USD     always-on extras prorated by the calendar (Redis machine + volumes ≈ 2.35)
+#   EGRESS_USD_PER_GB           0.02 (North America)
+#   BUDGET_STATE_FILE           month-to-date counters (JSON on the sim volume; Redis in milestone 5)
+#   ALWAYS_ON_RELAYS            how many relays count as always-on capacity (1 = min_machines_running)
+#   EDGE_CAPACITY               players per always-on relay before the 90%/100% tiers turn newcomers into
+#                               watchers / the packed page; keep equal to the edge soft_limit below
+#   VIRTUAL_PLAYERS             in-process fake crowd (0 in production)
+# Edge:
+#   SIM_URL                     ws://sim.process.<app>.internal:8081/relay
+#   POW_DIFFICULTY              leading zero bits of the session proof of work: 14 ≈ 50-150 ms on a phone
+#   SESSION_TTL_S               session token lifetime (600)
+#   IP_VOTE_CAP                 all sockets from one IP (IPv6: one /64) weigh at most this many votes (4)
+#   IP_CONN_CAP                 sockets per IP per relay (32)
+#   INPUT_RATE_LIMIT            input changes per second per socket (20)
+#   EDGE_ALWAYS_ON              1 on a relay that must count as always-on (else the sim picks the oldest relay)
+#   MACHINE_HOURLY_USD          this relay's $/h for the governor (set per machine for performance-class extras)
+#   EGRESS_OVERHEAD_BYTES       per-message WebSocket+TLS+TCP/IP overhead counted as egress (80)
+#   STATIC_DIR                  built client (default packages/client/dist)
+#   TRUST_TEST_IP_HEADER        load tests only; the edge refuses to start with it in production
+#   LATENCY_PROBE               load tests only
+#
+# ── Scaling and cost ──────────────────────────────────────────────────────────────────────────
+# Extra relays are pre-created and left stopped (a few cents of disk each), so their number is a hard
+# ceiling on compute cost (MAX_RELAYS, spec §10), e.g. 4 extras:
+#   fly machine clone <edge-machine-id> --vm-size performance-1x --env MACHINE_HOURLY_USD=0.0431   (×4, then fly machine stop)
+# Measured locally (milestone 4 load test, 20 Hz frames): an edge used ~0.4 of a CPU core for 2,500
+# players and ~0.53 for 4,900, and 25-45 KB of memory per player. A shared-cpu-1x machine only
+# sustains a fraction of a core before Fly throttles it, so the always-on shared edge's soft limit
+# is kept modest and spikes land on the performance-class extras; a throttled relay notices and
+# drops to every other frame.
+
+app = "blobocracy"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "10s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  sim = "node --import tsx packages/sim/src/main.ts"
+  edge = "node --import tsx packages/edge/src/main.ts"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  LOCAL_RELAY = "0"
+  SIM_LINK_PORT = "8081"
+  SIM_LINK_HOST = "::"
+  SIM_URL = "ws://sim.process.blobocracy.internal:8081/relay"
+  BUDGET_MODE = "cap"
+  MONTHLY_BUDGET_USD = "50"
+  BUDGET_ALERT_USD = "25"
+  PRICE_SIM_HOURLY_USD = "0.00507"
+  PRICE_EDGE_HOURLY_USD = "0.00507"
+  PRICE_FIXED_MONTHLY_USD = "2.35"
+  EGRESS_USD_PER_GB = "0.02"
+  BUDGET_STATE_FILE = "/data/budget.json"
+  ALWAYS_ON_RELAYS = "1"
+  EDGE_CAPACITY = "1500"
+  POW_DIFFICULTY = "14"
+  IP_VOTE_CAP = "4"
+  IP_CONN_CAP = "32"
+  INPUT_RATE_LIMIT = "20"
+
+# The public face: only the edge group gets a service. WebSockets ride the http handler, which also
+# sets Fly-Client-IP (used for the per-IP caps and bans).
+[http_service]
+  processes = ["edge"]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 1500   # Fly starts the next stopped relay past this (keep EDGE_CAPACITY equal)
+    hard_limit = 2500   # never more sockets than this on one relay
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "2s"
+
+# The sim has no service, so Fly never auto-stops it; its health check runs on the internal port.
+[checks]
+  [checks.sim_health]
+    processes = ["sim"]
+    type = "http"
+    port = 8081
+    method = "get"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+# Month-to-date budget counters survive sim restarts and deploys.
+[[mounts]]
+  processes = ["sim"]
+  source = "sim_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[[vm]]
+  processes = ["sim"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[vm]]
+  processes = ["edge"]
+  size = "shared-cpu-1x"
+  memory = "512mb"

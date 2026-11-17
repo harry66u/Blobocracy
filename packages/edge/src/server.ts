@@ -284,6 +284,7 @@ export async function startEdge(o: EdgeOptions) {
       url = '/index.html';
       if (!files.has(url)) { res.writeHeader('content-type', 'text/html; charset=utf-8').end(placeholderPage()); return; }
     }
+    if (/^\/c\/[A-Za-z0-9_-]{1,64}\/?$/.test(url)) url = '/clip.html'; // clip links (milestone 6)
     const f = files.get(url);
     if (!f) { res.writeStatus('404 Not Found').end('not found'); return; }
     const gz = f.gzip && req.getHeader('accept-encoding').includes('gzip');

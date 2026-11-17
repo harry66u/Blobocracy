@@ -46,9 +46,9 @@ describe('inhumanly regular timing', () => {
 
 describe('identical input streams across sockets', () => {
   test('many sockets replaying the same stream at the same time are flagged together', () => {
-    const d = new IdenticalStreams({ minGroup: 5, minChanges: 6 });
+    const d = new IdenticalStreams();
     const flagged = new Set<number>();
-    for (let step = 0; step < 10; step++) {
+    for (let step = 0; step < 14; step++) {
       for (let id = 1; id <= 8; id++) {
         const t = 1000 + step * 333 + id * 0.1; // same instant, a fraction of a ms apart
         for (const f of d.observe(id, step % 2 ? 2 : 6, t)) flagged.add(f);

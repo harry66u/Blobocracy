@@ -18,8 +18,10 @@ export interface BotsOptions { count: number; profile: ProfileArg; urls: string[
 
 export interface BotsSnapshot {
   connected: number; connecting: number;
-  /** Frames received per second across all bots (last second). */
+  /** Frames received per second across all bots, since the previous snapshot. */
   framesPerS: number; eventsPerS: number; inputsPerS: number;
+  /** Frames received by all bots so far. */
+  framesTotal: number;
   rtt: Reservoir;
   failed: Record<string, number>;
   closedByServer: Record<string, number>;
@@ -49,8 +51,13 @@ export function runBots(o: BotsOptions) {
     return c;
   });
 
+  let lastTotal = 0, lastAt = performance.now();
   const snapshot = (): BotsSnapshot => {
     const rs = [...latest.values()];
+    const framesTotal = sum(rs, (r) => r.framesTotal);
+    const now = performance.now();
+    const framesPerS = Math.round(((framesTotal - lastTotal) * 1000) / Math.max(1, now - lastAt));
+    lastTotal = framesTotal; lastAt = now;
     const failed: Record<string, number> = {}, closedByServer: Record<string, number> = {};
     const byProfile: Record<string, { connected: number; refused: number }> = {};
     for (const r of rs) {
@@ -63,7 +70,7 @@ export function runBots(o: BotsOptions) {
     }
     return {
       connected: sum(rs, (r) => r.connected), connecting: sum(rs, (r) => r.connecting),
-      framesPerS: sum(rs, (r) => r.frames), eventsPerS: sum(rs, (r) => r.events), inputsPerS: sum(rs, (r) => r.inputsSent),
+      framesPerS, framesTotal, eventsPerS: sum(rs, (r) => r.events), inputsPerS: sum(rs, (r) => r.inputsSent),
       rtt, failed, closedByServer, byProfile,
     };
   };

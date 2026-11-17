@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { IN_RIGHT, decodeServer, encodeInput, solvePow, type StateFrame } from '@blobocracy/shared';
 import { startServer } from '../../sim/src/server';
@@ -155,5 +158,22 @@ describe('sim + two edges', () => {
     await waitFor(() => b.state().policy.tier === 100);
     expect(b.state().policy.alwaysOn).toBe(false);
     expect((await fetch(`http://127.0.0.1:${b.port}/session`, { headers: { 'x-test-ip': '198.51.100.11' } })).status).toBe(503);
+  });
+
+  test('serves the built client, marked so the page fetches a session first; clip links get the clip page', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dist-'));
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'index.html'), `<html><head><title>Blobocracy</title></head><body>${'x'.repeat(2000)}</body></html>`);
+    writeFileSync(join(dir, 'clip.html'), '<html><head></head><body>clip</body></html>');
+    writeFileSync(join(dir, 'assets', 'main-abc.js'), 'console.log(1)');
+    const s = await sim();
+    const a = await edge(s, { staticDir: dir });
+    const r = await fetch(`http://127.0.0.1:${a.port}/`);
+    expect(r.headers.get('content-encoding')).toBe('gzip');
+    expect(await r.text()).toContain('<meta name="blobocracy-session" content="pow"></head>');
+    const js = await fetch(`http://127.0.0.1:${a.port}/assets/main-abc.js`);
+    expect(js.headers.get('cache-control')).toContain('immutable');
+    expect(await (await fetch(`http://127.0.0.1:${a.port}/c/AbC123`)).text()).toContain('clip');
+    expect((await fetch(`http://127.0.0.1:${a.port}/nope.js`)).status).toBe(404);
   });
 });

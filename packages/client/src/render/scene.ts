@@ -57,6 +57,9 @@ export interface SceneHud {
   recordPop?: number | null;
   /** Sound is off (the sound button shows it). */
   muted?: boolean;
+  /** false: no sound/settings buttons, and the progress bar ends `barEnd` CSS px from the right (clips). */
+  buttons?: boolean;
+  barEnd?: number;
 }
 
 export interface SceneDeathCard {

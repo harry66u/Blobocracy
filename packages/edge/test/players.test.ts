@@ -64,7 +64,8 @@ describe('edge crowd: weighted counts', () => {
     const c = new EdgeCrowd(opts);
     c.add(1, '1.1.1.1');
     let t = 1000;
-    const jitter = (i: number) => (i * 7) % 10; // a sloppy script, so the timing check stays quiet
+    let seed = 3;
+    const jitter = (_i: number) => { seed = (seed * 16807) % 2147483647; return (seed % 1000) / 100; }; // a sloppy script: the timing check stays quiet
     for (let i = 0; i < 25; i++) c.input(1, i % 2 ? R : L, (t += 10 + jitter(i)));
     expect(c.stats().rateLimitedInputs).toBe(5);
     c.input(1, J, t);

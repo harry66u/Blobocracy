@@ -65,6 +65,7 @@ for (;;) {
 const rampS = (Date.now() - t0) / 1000;
 
 const frames: number[] = [], cpu: Record<string, number[]> = {};
+const steady0 = { total: bots.snapshot().framesTotal, at: performance.now() };
 for (let i = 0; i < steadyS; i++) {
   await sleep(1000);
   const s = bots.snapshot();
@@ -77,6 +78,9 @@ for (let i = 0; i < steadyS; i++) {
 }
 const end = await stats();
 const s = bots.snapshot();
+// Worker reports can arrive late when the bot processes are saturated, so the average comes from
+// the cumulative count over the whole steady window (a little behind real time at both ends).
+const steadyAvg = Math.round(((s.framesTotal - steady0.total) * 1000) / (performance.now() - steady0.at));
 const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
 const relays = end.relays.map((r: any) => {
   const st = r.stats ?? {};
@@ -108,7 +112,7 @@ const e2s = end.edgeToSimMs;
 const result = {
   count, pow: Number(pow), rampSeconds: rampS, steadySeconds: steadyS,
   connected: s.connected, online: players, active: end.active, byProfile: s.byProfile, refused: s.failed, closedByServer: s.closedByServer,
-  framesPerS: { avg: Math.round(avg(frames)), min: Math.min(...frames), max: Math.max(...frames), expected: Math.round(expected) },
+  framesPerS: { avg: steadyAvg, perSecondMin: Math.min(...frames), perSecondMax: Math.max(...frames), expected: Math.round(expected) },
   latencyMs: {
     note: 'press → server = client→edge (one-way, same-host clocks) + edge→sim (input arrival at the edge until the sim step that applied it)',
     clientToEdge: c2e, edgeToSim: e2s,

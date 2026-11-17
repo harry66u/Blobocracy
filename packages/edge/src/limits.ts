@@ -42,7 +42,7 @@ export class TimingMonitor {
   private last = NaN;
   private gaps: number[] = [];
 
-  constructor(private window = 12, private toleranceMs = 3, private maxGapMs = 5000) {}
+  constructor(private window = 8, private toleranceMs = 3, private maxGapMs = 5000) {}
 
   /** Records an input change; true when the recent rhythm is machine-regular. */
   record(nowMs: number): boolean {
@@ -69,8 +69,9 @@ export class TimingMonitor {
  * `minChanges` changes (bits plus the `binMs` slot they happened in) form a fingerprint; when
  * `minGroup` sockets share one, they are all flagged. People reacting to the same moment still
  * spread over a few hundred ms, so even thousands of them never line up to the same 25 ms over
- * eight changes in a row (the load test checks this with 3,500 bots reacting to the same cues),
- * while one script's sockets arrive within a millisecond or two of each other.
+ * twelve changes in a row, while one script's sockets arrive within a millisecond or two of each
+ * other. (Looser settings, 6 changes in 100 ms slots, flagged 0.7% of 3,500 well-behaved bots in
+ * the load test: a busy event loop handles many sockets' messages in one batch.)
  */
 export class IdenticalStreams {
   private readonly minGroup: number;
@@ -81,8 +82,8 @@ export class IdenticalStreams {
   private groups = new Map<string, Set<number>>();
 
   constructor(o: { minGroup?: number; minChanges?: number; binMs?: number } = {}) {
-    this.minGroup = o.minGroup ?? 5;
-    this.minChanges = o.minChanges ?? 8;
+    this.minGroup = o.minGroup ?? 8;
+    this.minChanges = o.minChanges ?? 12;
     this.binMs = o.binMs ?? 25;
   }
 

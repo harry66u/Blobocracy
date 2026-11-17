@@ -10,6 +10,8 @@ import type { BotSpec, Profile } from './profiles';
 export interface WorkerInit { specs: BotSpec[]; ratePerS: number; maxInflight: number }
 export interface WorkerReport {
   connected: number; connecting: number; frames: number; events: number; inputsSent: number;
+  /** Frames received since the worker started (rates come from differences of this, not from `frames`). */
+  framesTotal: number;
   rtt: number[];
   failed: Record<string, number>;
   /** Sockets the server closed after they opened, by close code. */
@@ -29,7 +31,7 @@ interface Bot {
   jumpPlanned: boolean;
 }
 
-const report: WorkerReport = { connected: 0, connecting: 0, frames: 0, events: 0, inputsSent: 0, rtt: [], failed: {}, closedByServer: {}, byProfile: {} };
+const report: WorkerReport = { connected: 0, connecting: 0, frames: 0, events: 0, inputsSent: 0, framesTotal: 0, rtt: [], failed: {}, closedByServer: {}, byProfile: {} };
 const bots: Bot[] = [];
 const followers = new Set<Bot>();
 const farms = new Map<number, Set<Bot>>();
@@ -185,6 +187,7 @@ async function launch(b: Bot) {
     const type = new Uint8Array(buf, 0, 1)[0];
     if (type === MSG_STATE) {
       report.frames++;
+      report.framesTotal++;
       if (observer === b) observe(buf);
     } else if (type === MSG_PONG && buf.byteLength === 5) {
       const t = new DataView(buf).getUint32(1, true);

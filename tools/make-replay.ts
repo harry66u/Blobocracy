@@ -105,17 +105,18 @@ mkdirSync(out, { recursive: true });
 const recordRun = 3940;
 const seeds = [42, 7, 1234, 99, 2026, 5, 314, 808];
 
-// --- near miss: a death in zone 2 or 3, a record seeded just ahead of it ---------------------
-let nearMiss: { startX: number; seed: number; p: number } | null = null;
-search: for (const startX of [640, 700, 760, 830, 900, 980, 1100, 1180, 1260]) {
-  for (const seed of seeds) {
+// --- near miss: the longest-lived run from a start in zones 2-3, a record seeded just ahead ---
+// of where it dies (the crowd dies a lot out there, so runs are short: the clip is the whole run)
+let nearMiss: { startX: number; seed: number; p: number; life: number } | null = null;
+for (let startX = 540; startX < 1600; startX += 15) {
+  for (const seed of seeds.slice(0, 4)) {
     const r = run({ startX, seed, record: null, maxS: 70 });
-    if (process.env.DEBUG) console.log(startX, seed, r && { zone: r.zoneAt, death: r.deathAt?.toFixed(1), p: r.deathProgress.toFixed(3), s: r.startProgress.toFixed(3) });
-    // a run long enough to fill most of the clip, that got somewhere before dying
-    if (r?.deathAt && r.deathAt > 18 && r.deathProgress - r.startProgress > 0.01) { nearMiss = { startX, seed, p: r.deathProgress }; break search; }
+    if (!r?.deathAt || r.deathProgress - r.startProgress < 0.006) continue;
+    if (!nearMiss || r.deathAt > nearMiss.life) nearMiss = { startX, seed, p: r.deathProgress, life: r.deathAt };
   }
 }
 if (!nearMiss) throw new Error('no near-miss run found');
+if (process.env.DEBUG) console.log('near miss pick', nearMiss);
 {
   const rec = new ReplayRecorder({ levelId: level.id, levelVersion: level.version });
   const record = { progress: Math.min(1, nearMiss.p + 0.006), run: recordRun };
@@ -124,18 +125,20 @@ if (!nearMiss) throw new Error('no near-miss run found');
 }
 
 // --- zone: pass a seeded record, reach a new zone, then die (a new record) -------------------
-let zoneRun: { startX: number; seed: number; recordP: number } | null = null;
-search2: for (const boundary of level.zones.slice(1).map((z) => z.startX)) {
-  for (const back of [40, 60, 80, 30]) {
-    for (const seed of seeds) {
+let zoneRun: { startX: number; seed: number; recordP: number; score: number } | null = null;
+for (const boundary of level.zones.slice(1).map((z) => z.startX)) {
+  for (let back = 20; back <= 110; back += 6) {
+    for (const seed of seeds.slice(0, 4)) {
       const r = run({ startX: boundary - back, seed, record: null, maxS: 60 });
       if (!r?.zoneAt || !r.deathAt) continue;
       const after = r.deathAt - r.zoneAt;
-      // the zone moment and the death both inside the last 30 s, with room for the record pass before
-      if (r.zoneAt >= 5 && after >= 5 && after <= 18) {
-        const recordP = r.progressAt(Math.max(r.zoneAt - 3.2, r.deathAt + 3.5 - 27));
-        if (recordP > r.startProgress + 0.002) { zoneRun = { startX: boundary - back, seed, recordP }; break search2; }
-      }
+      if (r.zoneAt < 3 || after < 3) continue;
+      // build-up before the zone, a while in the new zone, and all of it inside 30 s
+      const score = Math.min(r.zoneAt, 9) + Math.min(after, 12) - Math.max(0, r.deathAt + 3.5 - 30);
+      const recordP = r.progressAt(r.zoneAt - 2.4);
+      if (recordP <= r.startProgress + 0.002) continue;
+      if (!zoneRun || score > zoneRun.score) zoneRun = { startX: boundary - back, seed, recordP, score };
+      if (process.env.DEBUG) console.log('zone cand', boundary - back, seed, r.zoneAt.toFixed(1), r.deathAt.toFixed(1), score.toFixed(1));
     }
   }
 }

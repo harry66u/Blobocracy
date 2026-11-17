@@ -297,7 +297,8 @@ export class HudView {
   private progress(ctx: CanvasRenderingContext2D, L: Layout, hud: SceneHud, pal: SkyPalette, s: number): void {
     const phone = L.phone;
     const y = L.h - (phone ? 34 : 30) * s;
-    const x0 = (phone ? 18 : 32) * s, x1 = L.w - (phone ? 82 : 110) * s;
+    const buttons = hud.buttons !== false;
+    const x0 = (phone ? 18 : 32) * s, x1 = L.w - (buttons ? (phone ? 82 : 110) * s : hud.barEnd ?? x0);
     const w = x1 - x0;
     const th = 8 * s;
     const run = clamp01(hud.progress);
@@ -356,7 +357,7 @@ export class HudView {
     ctx.fillStyle = INK;
     ctx.fill();
     // sound + settings
-    for (const b of hudButtons(L)) icon(ctx, b.kind, b.cx, b.cy, b.r, b.kind === 'sound' && !!hud.muted);
+    if (buttons) for (const b of hudButtons(L)) icon(ctx, b.kind, b.cx, b.cy, b.r, b.kind === 'sound' && !!hud.muted);
   }
 
   // ---- death card -----------------------------------------------------------

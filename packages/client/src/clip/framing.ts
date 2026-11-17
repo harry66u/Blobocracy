@@ -24,9 +24,9 @@ export const FPS = 30;
 export function clipLayout(w: number, h: number, dpr: number): Layout {
   const base = computeLayout(w, h, dpr);
   if (base.phone) {
-    const tile = w / 9.4;
+    const tile = w / 8.6;
     const viewW = w / tile;
-    return { ...base, tile, groundY: 0.64 * h, lookAhead: viewW * 0.4 };
+    return { ...base, tile, groundY: 0.62 * h, lookAhead: viewW * 0.4 };
   }
   const tile = h / 14.5;
   return { ...base, tile, groundY: 0.72 * h, lookAhead: (w / tile) * 0.36 };
