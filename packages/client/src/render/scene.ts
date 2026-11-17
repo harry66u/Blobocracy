@@ -40,6 +40,8 @@ export interface SceneBlob {
   /** Tug-of-war strain, 0 to 1. */
   strain: number;
   dead: boolean;
+  /** What killed it ('press', 'spikes', 'ceiling spikes', 'pit', 'saw', 'chomp'); picks the death pose. */
+  deathCause?: string | null;
 }
 
 export interface SceneHud {
@@ -51,9 +53,50 @@ export interface SceneHud {
   progress: number;
   /** Second line under "Record 83%", e.g. "run 3,940, nine days ago". Cut at the first comma when space is tight. */
   recordLabel: string;
+  /** Seconds since this run passed the record ("New record!" pops), or null. */
+  recordPop?: number | null;
+  /** Sound is off (the sound button shows it). */
+  muted?: boolean;
 }
 
-export interface SceneDeathCard { run: number; progress: number; cause: string; nearRecord: boolean }
+export interface SceneDeathCard {
+  run: number;
+  progress: number;
+  /** Second half of the sentence, e.g. "then the Big Press flattened it." */
+  line: string;
+  nearRecord: boolean;
+  /** Seconds until everyone goes back to the start (shown as "Back to the start in 3"). */
+  countdown?: number;
+}
+
+export interface SceneBanner {
+  /** Changes for every new banner (starts the confetti). */
+  id: number;
+  /** Zone index, 0-based ("Zone 3" is index 2). */
+  index: number;
+  name: string;
+  /** Seconds since the zone was entered. */
+  age: number;
+}
+
+/** Screen-wide effects for the big moments. All optional; absent means calm. */
+export interface SceneFx {
+  /** Reduced motion: no shakes or bounces, fades instead. */
+  reduced: boolean;
+  /** Hit-stop: the world's animation clock stands still (the HUD keeps moving). */
+  freeze: boolean;
+  /** White flash over the world, 0..1. */
+  flash: number;
+  /** Dark vignette, 0..1. */
+  vignette: number;
+  /** Cover fade (reduced-motion swoop), 0..1. */
+  fade: number;
+  banner: SceneBanner | null;
+  /** World x of the in-world record flag, or null. */
+  recordFlagX: number | null;
+  /** Sky cross-fade speed multiplier (fast during the swoop, slow under reduced motion). */
+  skyRate: number;
+}
 
 export interface Scene {
   level: SceneLevel;
@@ -73,6 +116,7 @@ export interface Scene {
   chompStart: number | null;
   /** Crumble tiles touched this run: they shake for 0.5 s, then break apart and are gone. */
   crumbles: SceneCrumble[];
+  fx?: SceneFx;
 }
 
 export type { Layout };

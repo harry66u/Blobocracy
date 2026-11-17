@@ -9,8 +9,8 @@ Status: milestone 1 (playable core). See `CHECKLIST.md` for progress. The full R
 You need [Node.js 22 or newer](https://nodejs.org/) and git.
 
 ```bash
-git clone https://github.com/harry66u/bored.git
-cd bored
+git clone https://github.com/harry66u/Blobocracy.git
+cd Blobocracy
 git checkout claude/epic-lovelace-slfnh6
 npm install
 npm run dev
