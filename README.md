@@ -1,8 +1,26 @@
 # Blobocracy
 
-Everyone on the site controls the same blob at the same time. One life for the whole internet.
+Everyone on the site controls the same blob at the same time. Every player's left, right and jump are blended live into one character, in one long, hard, hand-designed platformer. The whole internet shares one life: a death sends everyone back to the start and adds one to the global death counter. Beat level 1 together and level 2 unlocks.
 
-Status: milestones 1-5 done, 6 in progress. See `CHECKLIST.md` for progress. The full README (deployment, scaling, environment variables) comes with milestone 7.
+- **Play:** open the site; no login, no download. Keyboard on desktop, touch buttons on phones.
+- **Pages:** the game at `/`, every attempt at `/runs`, beaten levels at `/hall`, shareable replay clips at `/c/<id>`.
+- **Progress:** `CHECKLIST.md`. Design: `docs/superpowers/specs/2026-11-17-blobocracy-design.md`. Deploying: `docs/DEPLOY.md`.
+
+## How it works
+
+```
+browsers ──WebSocket──▶ edge relays (1 always on, more start in a spike) ──private network──▶ sim (exactly one)
+                         serve the site, check sessions, merge inputs,        60 Hz physics, blending, deaths,
+                         fan out the same frame bytes to every player         records, clips, cost cap
+                                                                                   │
+                                                              Postgres (runs, clips, hall of fame) + Redis (live state)
+```
+
+- **One source of truth:** the sim runs the physics; clients only send three bits (left, right, jump). Nothing to cheat but voting power.
+- **Blending:** `pull = (right − left) / active players`, shaped by a response curve so a mostly-agreeing crowd moves decisively; a jump fires when 30% of active players press (or a fresh burst of 30% arrives within 0.25 s), and the crowd sets jump height by how long it holds. A lone player has full control; an empty world pauses.
+- **Bots and spam:** a proof-of-work session token, at most 4 votes' worth per IP, rate limits, and checks for robotic timing and identical input streams. Flagged players are silently ignored.
+- **Packages:** `shared` (physics, levels, protocol, replays), `sim`, `edge`, `client` (Canvas renderer, synthesized audio, pages), `bots`. Tools in `tools/` (solver, level preview, load test, screenshots).
+- **Levels** are hand-designed ASCII rooms (`packages/shared/src/levels/`). A solver proves each level is beatable with human-speed inputs: level 1's perfect run is 8.2 minutes, level 2's is 10.3. Check with `npm run test:level` (slow, about 20 minutes).
 
 ## Play it on your computer
 
@@ -76,3 +94,32 @@ npm run typecheck
 ```
 
 The Postgres and Redis store tests run only against real services: `TEST_DATABASE_URL=postgres://… TEST_REDIS_URL=redis://localhost:6379/15 npm test`.
+
+## Deploying
+
+Step-by-step for Fly.io, from no account to a live game, is in **`docs/DEPLOY.md`**. In short: create the app, set five secrets, `fly deploy`, and pre-create stopped spike relays.
+
+## Scaling and cost
+
+- **Normal traffic** runs on one sim and one relay (shared-cpu machines) plus free-tier Postgres: about $12–15 a month.
+- **Spikes:** Fly's proxy starts pre-created, stopped relays when the running relay passes 1,500 players, and stops them when traffic falls. How many relays you pre-create is a hard ceiling on compute. Measured locally: a relay handles about 2,500 players on 0.4 of a CPU core, 4,900 on 0.53, at 25–45 KB of memory per player. The sim's work grows with the number of relays, not players.
+- **Bandwidth** is the main cost in a spike: about 2.5 KB/s per player (~$3.60 an hour at 20,000 players).
+- **Cost cap:** the sim estimates month-to-date spend from machine hours and bytes sent. In cap mode (the default) it alerts at $25 and at 70/90/100% of $50, lowers the frame rate at 70%, turns new visitors into watchers at 90%, and holds capacity with a friendly "packed" page at 100%. Raise it live with `POST /admin/budget` (see `docs/DEPLOY.md`).
+- **Graceful degradation:** slow sockets skip frames instead of lagging; an overloaded relay sends every other frame; if the sim restarts, players see "Reconnecting to the blob…" and the run resumes from a snapshot (a restart is never a death); if Postgres is down, the game keeps going and writes queue until it returns.
+
+## Environment variables
+
+Every variable, with its default and which process reads it, is documented at the top of `fly.toml`. The ones you set:
+
+| Variable | Process | Purpose |
+|---|---|---|
+| `SESSION_SECRET` | edge | Signs session tokens (required in production). |
+| `RELAY_SECRET` | sim, edge | Shared secret for the relay ↔ sim link. |
+| `ADMIN_TOKEN` | sim | Bearer token for `/admin/*` (stats, bans, budget). Unset = admin off. |
+| `DATABASE_URL` | sim | Postgres. Unset = history in memory only. |
+| `REDIS_URL` | sim, edge | Live snapshot, budget counters, shared per-IP caps. Unset = files on the sim volume. |
+| `ALERT_WEBHOOK_URL` | sim | Discord/Slack webhook for budget alerts. |
+| `PUBLIC_URL` | edge | Your domain, for link previews. |
+| `BUDGET_MODE`, `MONTHLY_BUDGET_USD`, `BUDGET_ALERT_USD` | sim | `cap`, `50`, `25` (your choice). |
+| `POW_DIFFICULTY`, `IP_VOTE_CAP`, `IP_CONN_CAP`, `INPUT_RATE_LIMIT` | edge | Bot defenses: 14 bits, 4 votes, 32 sockets, 20 changes/s. |
+| `PORT`, `VIRTUAL_PLAYERS` | dev | Server port (8080); fake players for testing. |
