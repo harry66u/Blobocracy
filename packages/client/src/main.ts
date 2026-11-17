@@ -129,6 +129,9 @@ function frame(): void {
     paused: f?.phase === 'paused',
   };
 
+  // While the death card is up inputs don't count; fade the touch buttons so a pit death stays visible.
+  document.body.classList.toggle('bl-dying', blob.dead);
+
   cam = camera(L, pos, cam, dt);
   renderFrame(view.ctx, L, cam, scene, t);
 

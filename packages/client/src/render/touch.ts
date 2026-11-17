@@ -78,6 +78,8 @@ const STYLE = `
   transition:transform 60ms ease-out, box-shadow 60ms ease-out, background-color 60ms;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .bl-touch button.down{transform:translateY(3px);box-shadow:0 1px 0 rgba(42,27,61,.9);background:#F4E6C8}
 .bl-touch button:focus-visible{outline:3px solid #FFD21F;outline-offset:3px}
+.bl-touch button{transition:opacity .25s}
+body.bl-dying .bl-touch button{opacity:.15}
 .bl-touch svg{display:block;overflow:visible;pointer-events:none}
 `;
 
