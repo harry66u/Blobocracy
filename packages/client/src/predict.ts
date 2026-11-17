@@ -1,0 +1,37 @@
+import { BLEND, DT, stepBody, type Body, type Level, type StateFrame } from '@blobocracy/shared';
+
+const MAX_AHEAD_S = 0.15;
+const SNAP_TILES = 3;
+const HALF_LIFE_S = 0.06;
+
+/** Body state as carried by a server frame (no prediction). */
+export function bodyFromFrame(f: StateFrame): Body {
+  return {
+    x: f.x, y: f.y, vx: f.vx, vy: f.vy, grounded: f.grounded, coyote: 0, buffer: 0,
+    rising: f.vy < 0 && f.jumpHeld, prevJumpHeld: f.jumpHeld, facing: f.facing, landed: 0,
+  };
+}
+
+/**
+ * Runs the shared physics forward from a server frame using that frame's blended
+ * control, so the blob appears where the server will have it by now.
+ * Never predicts deaths, pauses or resets: only 'running' frames advance.
+ */
+export function predict(frame: StateFrame, level: Level, aheadS: number): Body {
+  const b = bodyFromFrame(frame);
+  if (frame.phase !== 'running') return b;
+  const steps = Math.floor(Math.min(Math.max(aheadS, 0), MAX_AHEAD_S) / DT + 1e-9);
+  const control = { move: frame.pull * (1 - BLEND.strainSlow * frame.strain), jumpHeld: frame.jumpHeld };
+  for (let i = 0; i < steps; i++) {
+    if (stepBody(b, control, level)) break;
+  }
+  return b;
+}
+
+/** Exponential correction toward the predicted position; snaps after big jumps (resets, teleports). */
+export function smooth(prev: { x: number; y: number }, target: { x: number; y: number }, dtS: number): { x: number; y: number } {
+  const dx = target.x - prev.x, dy = target.y - prev.y;
+  if (Math.hypot(dx, dy) > SNAP_TILES) return { x: target.x, y: target.y };
+  const k = 1 - Math.pow(0.5, dtS / HALF_LIFE_S);
+  return { x: prev.x + dx * k, y: prev.y + dy * k };
+}
