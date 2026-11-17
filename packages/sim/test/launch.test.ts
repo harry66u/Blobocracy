@@ -59,6 +59,10 @@ describe('launch server features', () => {
     expect((await fetch(`${base}/a`, { method: 'POST', body: beacon })).status).toBe(204);
     expect((await fetch(`${base}/a`, { method: 'POST', body: '{"e":"evil"}' })).status).toBe(400);
     expect((await fetch(`${base}/a`, { method: 'POST', body: 'x'.repeat(5000) })).status).toBe(400);
+    // these used to crash the process (prototype lookups); now counted or rejected, and the server stays up
+    expect((await fetch(`${base}/a`, { method: 'POST', body: '{"e":"stay","s":30,"src":"constructor"}' })).status).toBe(204);
+    expect((await fetch(`${base}/a`, { method: 'POST', body: '{"e":"play","src":"__proto__"}' })).status).toBe(400);
+    expect((await fetch(`${base}/api/status`)).status).toBe(200);
     expect((await fetch(`${base}/stats`)).status).toBe(404);
     expect((await fetch(`${base}/stats?key=wrong`)).status).toBe(404);
     const page = await (await fetch(`${base}/stats?key=s3cret&days=7`)).text();

@@ -3,7 +3,7 @@
 // Days are US Eastern calendar days (the maker's time zone).
 
 export const STAY_S = [30, 120, 300, 900] as const;
-const MAX_SOURCES_PER_DAY = 300;
+const MAX_SOURCES_PER_DAY = 100;
 const KEEP_DAYS = 400;
 
 export interface SourceDay {
@@ -42,6 +42,9 @@ const blankDay = (): SourceDay => ({ loads: 0, visitors: 0, fresh: 0, played: 0,
 const blankCohort = (): Cohort => ({ size: 0, nextDay: 0, week: 0 });
 
 const TAG = /^[a-z0-9._-]{1,32}$/;
+/** A source tag that is also safe as an object key ("__proto__" would rewrite the prototype). */
+const isTag = (s: unknown): s is string => typeof s === 'string' && TAG.test(s) && s !== '__proto__';
+const own = (o: object, k: string) => Object.hasOwn(o, k);
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const KINDS = new Set(['image', 'clip', 'text']);
 const HOWS = new Set(['sheet', 'download', 'copy']);
@@ -64,19 +67,19 @@ export class Analytics {
     this.data = isData(data) ? data : { v: 1, days: {}, cohorts: {}, shares: {} };
   }
 
+  // Lookups use own properties only: a tag like "constructor" must never resolve to Object.prototype's.
   private src(day: string, src: string): SourceDay {
-    const d = (this.data.days[day] ??= {});
-    if (!d[src]) {
-      if (Object.keys(d).length >= MAX_SOURCES_PER_DAY) src = 'other';
-      d[src] ??= blankDay();
-    }
+    const d = own(this.data.days, day) ? this.data.days[day]! : (this.data.days[day] = {});
+    if (!own(d, src) && Object.keys(d).length >= MAX_SOURCES_PER_DAY) src = 'other';
+    if (!own(d, src)) d[src] = blankDay();
     return d[src]!;
   }
 
   private cohort(day: string, src: string): Cohort {
-    const c = (this.data.cohorts[day] ??= {});
-    if (!c[src] && Object.keys(c).length >= MAX_SOURCES_PER_DAY) src = 'other';
-    return (c[src] ??= blankCohort());
+    const c = own(this.data.cohorts, day) ? this.data.cohorts[day]! : (this.data.cohorts[day] = {});
+    if (!own(c, src) && Object.keys(c).length >= MAX_SOURCES_PER_DAY) src = 'other';
+    if (!own(c, src)) c[src] = blankCohort();
+    return c[src]!;
   }
 
   /** Adds one beacon. Returns false (and changes nothing) for anything malformed. */
@@ -84,13 +87,13 @@ export class Analytics {
     if (raw.length > 600) return false;
     let b: Record<string, unknown>;
     try { b = JSON.parse(raw); } catch { return false; }
-    if (!b || typeof b !== 'object' || typeof b.src !== 'string' || !TAG.test(b.src)) return false;
+    if (!b || typeof b !== 'object' || !isTag(b.src)) return false;
     const day = etDay(nowMs);
     const src = b.src;
     switch (b.e) {
       case 'visit': {
         if (typeof b.isNew !== 'boolean' || typeof b.daily !== 'boolean' || typeof b.firstReturn !== 'boolean') return false;
-        if (typeof b.cohort !== 'string' || !DAY.test(b.cohort) || typeof b.firstSrc !== 'string' || !TAG.test(b.firstSrc)) return false;
+        if (typeof b.cohort !== 'string' || !DAY.test(b.cohort) || !isTag(b.firstSrc)) return false;
         const since = b.daysSince;
         if (typeof since !== 'number' || !Number.isInteger(since) || since < 0 || since > 5000) return false;
         // a cohort day far from today is a broken clock or a forged beacon
@@ -100,7 +103,8 @@ export class Analytics {
         if (b.daily) s.visitors++;
         if (b.isNew) {
           s.fresh++;
-          this.cohort(b.cohort, src).size++;
+          // the server's day, not the client's: a forged date can't create cohorts
+          this.cohort(day, src).size++;
         } else if (b.daily && cohortOk) {
           if (since === 1) this.cohort(b.cohort, b.firstSrc).nextDay++;
           if (b.firstReturn && since <= 7) this.cohort(b.cohort, b.firstSrc).week++;
@@ -119,9 +123,9 @@ export class Analytics {
       case 'share': {
         if (typeof b.kind !== 'string' || !KINDS.has(b.kind) || typeof b.how !== 'string' || !HOWS.has(b.how)) return false;
         this.src(day, src).shares++;
-        const sh = (this.data.shares[day] ??= {});
+        const sh = own(this.data.shares, day) ? this.data.shares[day]! : (this.data.shares[day] = {});
         const k = `${b.kind}:${b.how}`;
-        sh[k] = (sh[k] ?? 0) + 1;
+        sh[k] = (own(sh, k) ? sh[k]! : 0) + 1;
         break;
       }
       default:
@@ -131,11 +135,11 @@ export class Analytics {
     return true;
   }
 
-  /** Drops days older than about a year. */
+  /** Drops days older than about a year, and any day in the future. */
   prune(nowMs: number): void {
-    const cutoff = addDays(etDay(nowMs), -KEEP_DAYS);
+    const cutoff = addDays(etDay(nowMs), -KEEP_DAYS), latest = addDays(etDay(nowMs), 1);
     for (const k of ['days', 'cohorts', 'shares'] as const) {
-      for (const d of Object.keys(this.data[k])) if (d < cutoff) { delete this.data[k][d]; this.dirty = true; }
+      for (const d of Object.keys(this.data[k])) if (d < cutoff || d > latest || !DAY.test(d)) { delete this.data[k][d]; this.dirty = true; }
     }
   }
 

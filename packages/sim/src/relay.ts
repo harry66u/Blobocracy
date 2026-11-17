@@ -60,7 +60,7 @@ export function startLocalRelay(opts: RelayOptions): Promise<Relay & { port: num
       const d = ws.getUserData();
       if (players >= capacity()) {
         // Full (MAX_PLAYERS or the budget cap): tell them why, with the live counter, and close.
-        const msg = JSON.stringify({ t: 'packed', deaths: world.deaths, online: players } satisfies ServerEvent);
+        const msg = JSON.stringify({ t: 'packed', deaths: world.deaths, online: voters.size() } satisfies ServerEvent);
         onBytes(msg.length);
         ws.send(msg, false);
         ws.end(CLOSE_PACKED, 'packed');

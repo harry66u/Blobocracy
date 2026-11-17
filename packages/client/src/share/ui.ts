@@ -14,7 +14,8 @@ type DeathEvent = Extract<ServerEvent, { t: 'death' }>;
 export type ShareKind = 'image' | 'clip' | 'text';
 
 const PILL_S = 25;
-const WAIT_DEATH_FRAME_MS = 1500;
+/** Give up looking for the death frame after this long (laggy links, throttled background tabs). */
+const WAIT_DEATH_FRAME_MS = 10_000;
 
 const STYLE = `
 .bl-share{position:fixed;z-index:20;font-family:'Atkinson Hyperlegible Next',system-ui,sans-serif;color:#2A1B3D;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
@@ -103,7 +104,6 @@ export class ShareUI {
   private readonly note: HTMLParagraphElement;
   private p: Pending | null = null;
   private shownAt = 0;
-  private lastFocus: Element | null = null;
   private readonly host: string;
 
   constructor(private readonly deps: ShareDeps, root: HTMLElement = document.body) {
@@ -176,13 +176,14 @@ export class ShareUI {
     this.bar.hidden = false;
     if (this.isOpen) this.fillPanel();
 
-    // Wait for the first 'dying' frame of this run: that tick is the moment of death.
+    // Wait for the first 'dying' frame of this run: that tick is the moment of death. Frames can
+    // arrive late (slow links, background tabs), so search what has been recorded until it shows up.
     const t0 = performance.now();
     const findDeath = () => {
       if (this.p !== p) return;
-      const f = this.deps.recorder.latest;
-      if (f && f.run === e.run && f.phase === 'dying') {
-        const first = this.deps.recorder.slice(f.tick - 2 * TICK_HZ, f.tick).find((x) => x.run === e.run && x.phase === 'dying') ?? f;
+      const latest = this.deps.recorder.latest;
+      const first = latest ? this.deps.recorder.slice(latest.tick - 8 * TICK_HZ, latest.tick).find((x) => x.run === e.run && x.phase === 'dying') : undefined;
+      if (first) {
         p.deathTick = first.tick;
         p.hud = { ...hud, deathTick: first.tick };
         // the image needs ~0.5 s after the death for the squash; the clip ~1.8 s
@@ -194,7 +195,8 @@ export class ShareUI {
         }, (CLIP_AFTER_S + 0.2) * 1000);
         return;
       }
-      if (performance.now() - t0 < WAIT_DEATH_FRAME_MS) setTimeout(findDeath, 50);
+      if (latest && latest.run > e.run && performance.now() - t0 > 1000) return; // missed it entirely
+      if (performance.now() - t0 < WAIT_DEATH_FRAME_MS) setTimeout(findDeath, 100);
     };
     findDeath();
   }
@@ -213,6 +215,7 @@ export class ShareUI {
     if (!frames.length) return;
     p.imageP = renderShareImage(this.deps.level, this.deps.sceneLevel, frames, p.deathTick, p.share, this.host)
       .then(({ blob }) => {
+        if (this.p !== p) return; // a newer death replaced this one
         p.image = { blob, url: URL.createObjectURL(blob) };
         if (this.p === p && this.isOpen) this.fillPanel();
       })
@@ -235,6 +238,8 @@ export class ShareUI {
           return;
         } catch (err) {
           if ((err as DOMException).name === 'AbortError') return; // they changed their mind
+        } finally {
+          this.mainBtn.blur(); // arrows and space go back to the blob
         }
       }
     }
@@ -244,7 +249,6 @@ export class ShareUI {
   open(): void {
     if (!this.p) return;
     this.deps.onOpen?.();
-    this.lastFocus = document.activeElement;
     this.fillPanel();
     this.scrim.hidden = false;
     this.imgBtn.focus();
@@ -252,8 +256,8 @@ export class ShareUI {
 
   close(): void {
     this.scrim.hidden = true;
-    if (this.lastFocus instanceof HTMLElement) this.lastFocus.focus();
-    else (document.activeElement as HTMLElement | null)?.blur?.();
+    // Focus goes back to the page, not the share button, so arrows and space steer the blob again.
+    (document.activeElement as HTMLElement | null)?.blur?.();
   }
 
   private fillPanel(): void {
@@ -292,8 +296,11 @@ export class ShareUI {
       try {
         await navigator.share({ files: [file], text: this.text() });
         this.deps.onShare?.('image', 'sheet');
-      } catch { /* cancelled */ }
-      return;
+        return;
+      } catch (err) {
+        if ((err as DOMException).name === 'AbortError') return;
+        // refused (e.g. permission expired): save it instead
+      }
     }
     download(p.image.blob, this.fileName('png'));
     await copyText(this.text(), this.textEl);
@@ -317,6 +324,7 @@ export class ShareUI {
       } catch (err) {
         console.warn('clip failed', err);
         p.clipP = null;
+        if (this.p !== p) return;
         this.clipBtn.innerHTML = 'Clip failed <small>try again</small>';
         this.clipBtn.disabled = false;
         return;
@@ -330,8 +338,10 @@ export class ShareUI {
       try {
         await navigator.share({ files: [file], text: this.text() });
         this.deps.onShare?.('clip', 'sheet');
-      } catch { /* cancelled */ }
-      return;
+        return;
+      } catch (err) {
+        if ((err as DOMException).name === 'AbortError') return;
+      }
     }
     download(p.clip.blob, this.fileName(p.clip.ext));
     this.deps.onShare?.('clip', 'download');

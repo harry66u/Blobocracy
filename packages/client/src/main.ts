@@ -118,10 +118,14 @@ const share = new ShareUI({
 
 // Keyboard (keys pressed on the share button or panel belong to them, not the blob)
 addEventListener('keydown', (e) => {
-  if (share.owns(e.target) || share.isOpen) return;
+  if (share.isOpen) return; // the panel's buttons own the keyboard while it is open
   if (isGameKey(e.code)) { e.preventDefault(); input.key(e.code, true); }
 });
-addEventListener('keyup', (e) => { if (isGameKey(e.code)) { e.preventDefault(); input.key(e.code, false); } });
+addEventListener('keyup', (e) => {
+  if (!isGameKey(e.code)) return;
+  if (!share.owns(e.target)) e.preventDefault(); // let Space activate share buttons
+  input.key(e.code, false); // always release, so no key ever sticks
+});
 // Never leave a button "held" when the player switches away (review focus 1).
 releaseWhenHidden(window, document, () => input.releaseAll());
 document.addEventListener('visibilitychange', () => {

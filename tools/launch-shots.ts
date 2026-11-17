@@ -101,6 +101,10 @@ try {
   await dpage.waitForSelector('.bl-share-img[src]', { timeout: 10_000 });
   await dpage.waitForTimeout(300);
   await dpage.screenshot({ path: join(out, 'desktop-share-panel.png') });
+  // closing the panel must hand the keyboard back to the blob
+  await dpage.click('.bl-share-x');
+  const focusOk = await dpage.evaluate(() => document.activeElement === document.body || document.activeElement === null);
+  console.log('after closing the panel, keyboard focus is back on the page:', focusOk);
   await dctx.close();
 
   // ---- stats dashboard (beacons from the sessions above, plus a few synthetic ones) -----

@@ -134,24 +134,27 @@ async function encodeWebCodecs(input: ClipInput, onProgress: (p: number) => void
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => { failure = e; },
   });
-  encoder.configure({
-    codec: pick.codec, width: CLIP_W, height: CLIP_H, bitrate: 6_000_000, framerate: FPS,
-    ...(pick.kind === 'avc' ? { avc: { format: 'avc' } } : {}),
-  } as VideoEncoderConfig);
-  for (let i = 0; drawer.draw(i); i++) {
-    if (failure) throw failure;
-    const vf = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
-    encoder.encode(vf, { keyFrame: i % (FPS * 2) === 0 });
-    vf.close();
-    if (encoder.encodeQueueSize > 8 || i % 4 === 3) {
-      while (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 5));
-      onProgress(i / drawer.total);
-      await yieldToGame();
+  try {
+    encoder.configure({
+      codec: pick.codec, width: CLIP_W, height: CLIP_H, bitrate: 6_000_000, framerate: FPS,
+      ...(pick.kind === 'avc' ? { avc: { format: 'avc' } } : {}),
+    } as VideoEncoderConfig);
+    for (let i = 0; drawer.draw(i); i++) {
+      if (failure) throw failure;
+      const vf = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
+      encoder.encode(vf, { keyFrame: i % (FPS * 2) === 0 });
+      vf.close();
+      if (encoder.encodeQueueSize > 8 || i % 4 === 3) {
+        while (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 5));
+        onProgress(i / drawer.total);
+        await yieldToGame();
+      }
     }
+    await encoder.flush();
+    if (failure) throw failure;
+  } finally {
+    if (encoder.state !== 'closed') encoder.close(); // release the (possibly hardware) encoder
   }
-  await encoder.flush();
-  encoder.close();
-  if (failure) throw failure;
   muxer.finalize();
   onProgress(1);
   return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), mime: 'video/mp4', ext: 'mp4', codec: pick.codec };
@@ -181,6 +184,7 @@ async function encodeMediaRecorder(input: ClipInput, onProgress: (p: number) => 
   });
   rec.stop();
   await done;
+  for (const t of stream.getTracks()) t.stop();
   const type = rec.mimeType || mime || 'video/webm';
   onProgress(1);
   return { blob: new Blob(parts, { type }), mime: type, ext: type.includes('mp4') ? 'mp4' : 'webm', codec: type };

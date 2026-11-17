@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DT, LEVEL1, encodeState, type Level } from '@blobocracy/shared';
 import { makeAlerter, throttled, type AlertFn } from './alerts';
@@ -77,7 +78,8 @@ export async function startServer(opts: ServerOptions) {
       app.post('/a', (res, req) => {
         const ip = clientIp(res, req);
         readBody(res, 1024, (body) => {
-          const ok = body !== null && beaconLimit.allow(ip, now()) && analytics.ingest(body, now());
+          let ok = false;
+          try { ok = body !== null && beaconLimit.allow(ip, now()) && analytics.ingest(body, now()); } catch (e) { console.error('beacon rejected', e); }
           send(res, ok ? '204 No Content' : '400 Bad Request', 'text/plain', '', { 'cache-control': 'no-store' });
         });
       });
@@ -128,6 +130,21 @@ export async function startServer(opts: ServerOptions) {
   relayRef = relay;
   const crowd = opts.virtualPlayers > 0 ? new VirtualCrowd(voters, opts.virtualPlayers, 42) : null;
 
+  /** Periodic save: the file write happens off the game loop. */
+  let saving = false;
+  const saveAsync = () => {
+    if (!dataDir || saving) return;
+    saving = true;
+    analytics.prune(now());
+    const files: [string, string][] = [['budget.json', JSON.stringify(budget.state)]];
+    if (analytics.dirty) { files.push(['analytics.json', JSON.stringify(analytics.data)]); analytics.dirty = false; }
+    Promise.all(files.map(async ([name, body]) => {
+      const path = join(dataDir, name);
+      await writeFile(`${path}.tmp`, body);
+      await rename(`${path}.tmp`, path);
+    })).catch((e) => console.error('save failed', e)).finally(() => { saving = false; });
+  };
+  /** Final save on shutdown, synchronous so it completes before exit. */
   const save = () => {
     if (!dataDir) return;
     try {
@@ -180,7 +197,7 @@ export async function startServer(opts: ServerOptions) {
     }
     const wall = now();
     if (wall - lastBudgetTick >= 1000) { budget.tick(wall); lastBudgetTick = wall; }
-    if (wall - lastSave >= SAVE_EVERY_MS) { save(); lastSave = wall; }
+    if (wall - lastSave >= SAVE_EVERY_MS) { saveAsync(); lastSave = wall; }
   }, 4);
 
   return {

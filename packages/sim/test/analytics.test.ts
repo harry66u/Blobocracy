@@ -46,6 +46,29 @@ describe('analytics aggregation', () => {
     expect(a.dirty).toBe(false);
   });
 
+  test('tags named like Object.prototype members are counted safely or rejected, never crash', () => {
+    const a = new Analytics();
+    const now = at('2026-11-20T15:00:00Z');
+    expect(a.ingest(JSON.stringify({ e: 'stay', s: 30, src: 'constructor' }), now)).toBe(true);
+    expect(a.ingest(JSON.stringify({ e: 'play', src: 'tostring' }), now)).toBe(true);
+    expect(a.ingest(JSON.stringify({ e: 'play', src: '__proto__' }), now)).toBe(false);
+    expect(a.ingest(visit({ isNew: true, src: 'hasownproperty', firstSrc: '__proto__' }), now)).toBe(false);
+    expect(a.data.days['2026-11-20']!['constructor' as string]!.stay).toEqual([1, 0, 0, 0]);
+    expect(({} as Record<string, unknown>).loads).toBeUndefined();
+    expect(Object.prototype).not.toHaveProperty('played');
+    expect(a.summary('2026-11-20', '2026-11-20').sources.map((s) => s.source).sort()).toEqual(['constructor', 'tostring']);
+  });
+
+  test('new visitors are put in the server\'s day, so forged dates create nothing; future days are pruned', () => {
+    const a = new Analytics();
+    const now = at('2026-11-20T15:00:00Z');
+    a.ingest(visit({ isNew: true, cohort: '9999-01-01' }), now);
+    expect(Object.keys(a.data.cohorts)).toEqual(['2026-11-20']);
+    a.data.days['9999-01-01'] = {};
+    a.prune(now);
+    expect(Object.keys(a.data.days)).toEqual(['2026-11-20']);
+  });
+
   test('a forged far-away cohort is not credited with returns', () => {
     const a = new Analytics();
     a.ingest(visit({ cohort: '2020-01-01', daysSince: 1, firstReturn: true }), at('2026-11-20T15:00:00Z'));
@@ -56,8 +79,8 @@ describe('analytics aggregation', () => {
     const a = new Analytics();
     const now = at('2026-11-20T15:00:00Z');
     for (let i = 0; i < 400; i++) a.ingest(JSON.stringify({ e: 'play', src: `s${i}` }), now);
-    expect(Object.keys(a.data.days['2026-11-20']!).length).toBe(301);
-    expect(a.data.days['2026-11-20']!.other!.played).toBe(100);
+    expect(Object.keys(a.data.days['2026-11-20']!).length).toBe(101);
+    expect(a.data.days['2026-11-20']!.other!.played).toBe(300);
   });
 
   test('old days are pruned; data round-trips through JSON', () => {
