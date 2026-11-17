@@ -1,17 +1,20 @@
+import { makeEntity, type Entity } from '@blobocracy/shared';
 import { describe, expect, test } from 'vitest';
 import { dangerAhead } from '../src/render/blob.ts';
+import { crumbleGone, type DangerWorld } from '../src/render/danger.ts';
 import { homeOffset } from '../src/render/crowd.ts';
 import { traceLoops } from '../src/render/level.ts';
 import type { SceneLevel } from '../src/render/scene.ts';
 import { hitTouchZone, touchButtons, TouchTracker } from '../src/render/touch.ts';
 
 function level(rows: string[]): SceneLevel {
-  const codes: Record<string, number> = { '.': 0, '#': 1, '-': 2, '^': 3, v: 4 };
+  const codes: Record<string, number> = { '.': 0, '#': 1, '-': 2, '^': 3, v: 4, '~': 5, '*': 6, '>': 7, '<': 8 };
   return {
     width: rows[0]!.length,
     height: rows.length,
     tileAt: (x, y) => codes[rows[y]?.[x] ?? '.'] ?? 0,
     zones: [],
+    entities: [],
   };
 }
 
@@ -84,6 +87,54 @@ describe('dangerAhead', () => {
     const g = level(['..........', '..........', '#####..###']);
     expect(dangerAhead(g, { x: 2.5, y: 0.4, vx: 5, facing: 1 })).toBe(true);
     expect(dangerAhead(g, { x: 2.5, y: 0.4, vx: -5, facing: -1 })).toBe(false);
+  });
+});
+
+describe('dangerAhead with moving things', () => {
+  const rows = ['....................', '....................', '....................', '....................', '####################'];
+  const lv = level(rows);
+  const blob = { x: 4.5, y: 3.4, vx: 5, facing: 1 as const };
+  const world = (entities: Entity[], extra: Partial<DangerWorld> = {}): DangerWorld => ({ entities, runTime: 0, chompStart: null, crumbles: [], ...extra });
+
+  test('a saw just ahead is danger, one far behind is not', () => {
+    const saw = makeEntity({ kind: 'saw', r: 0.8 }, 0, 6, 3);
+    expect(dangerAhead(lv, blob, world([saw]))).toBe(true);
+    const behind = makeEntity({ kind: 'saw', r: 0.8 }, 0, 0, 3);
+    expect(dangerAhead(lv, blob, world([behind]))).toBe(false);
+  });
+  test('a crusher ahead is danger while slamming or holding, not while waiting up top', () => {
+    // period 4: wait 0..2.15, down 2.15..2.4, hold 2.4..3.0, up 3.0..4.0
+    const c = makeEntity({ kind: 'crusher', w: 2, drop: 1.5, period: 4 }, 0, 6, 0);
+    expect(dangerAhead(lv, blob, world([c], { runTime: 1 }))).toBe(false);
+    expect(dangerAhead(lv, blob, world([c], { runTime: 2.3 }))).toBe(true);
+    expect(dangerAhead(lv, blob, world([c], { runTime: 2.7 }))).toBe(true);
+  });
+  test('the chomp within six tiles behind is danger, farther back is not', () => {
+    const ch = makeEntity({ kind: 'chomp', speed: 2 }, 0, -10, 0);
+    expect(dangerAhead(lv, blob, world([ch]))).toBe(false);
+    expect(dangerAhead(lv, blob, world([ch], { chompStart: 0, runTime: 5 }))).toBe(true); // front at x = 0
+  });
+  test('crumble, spring and conveyor tiles are floor; a crumble being stood on is danger', () => {
+    const m = level(['..........', '..........', '###~~*><##']);
+    const b = { x: 1.5, y: 1.4, vx: 5, facing: 1 as const };
+    expect(dangerAhead(m, b, world([]))).toBe(false);
+    expect(dangerAhead(m, { ...b, x: 3.5 }, world([], { runTime: 1, crumbles: [{ tx: 3, ty: 2, at: 0.8 }] }))).toBe(true);
+  });
+  test('a crumble that already broke is a gap', () => {
+    const m = level(['..........', '..........', '###~~#####']);
+    const b = { x: 1.5, y: 1.4, vx: 5, facing: 1 as const };
+    const crumbles = [{ tx: 3, ty: 2, at: 0 }, { tx: 4, ty: 2, at: 0 }];
+    expect(crumbleGone(crumbles, 3, 2, 2)).toBe(true);
+    expect(crumbleGone(crumbles, 3, 2, 0.3)).toBe(false);
+    expect(crumbleGone(crumbles, 5, 2, 2)).toBe(false);
+    expect(dangerAhead(m, b, world([], { runTime: 5, crumbles }))).toBe(true);
+  });
+  test('a mover bridging a gap keeps the blob calm', () => {
+    const g = level(['..........', '..........', '..........', '#####..###']);
+    const b = { x: 2.5, y: 2.4, vx: 5, facing: 1 as const };
+    expect(dangerAhead(g, b, world([]))).toBe(true);
+    const mover = makeEntity({ kind: 'mover', w: 3, dx: 0, dy: 0, period: 2 }, 0, 4, 3);
+    expect(dangerAhead(g, b, world([mover]))).toBe(false);
   });
 });
 
