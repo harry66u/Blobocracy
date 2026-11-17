@@ -289,7 +289,7 @@ const eyeOfTheStorm: Zone = {
     new Room('Crumble Sprint', 'A crumbling bridge under ceiling spikes: short hops, no stopping.', 40)
       .pit(4, 35).ledge(4, 35, 13, '~').ceiling(8, 30, 8).spikes(15, 15).spikes(24, 24),
     new Room('Final Ferries', 'Two quick ferries out of step: no time to wait twice.', 40)
-      .pit(5, 34).ent('A', 5, 13, FERRY(7, 0, 2.2)).ent('B', 18, 13, FERRY(7, 0, 2.2, 0.5)),
+      .pit(5, 31).ent('A', 5, 13, FERRY(7, 0, 2.2)).ent('B', 18, 13, FERRY(7, 0, 2.2, 0.5)),
     new Room('Thorn Dash', 'A spiky ceiling over spikes while a tailwind gusts: short hops, with the wind and the teeth behind.', 44)
       .ceiling(6, 36, 8).spikes(11, 11).spikes(17, 18).spikes(25, 25).spikes(31, 32).ent('W', 4, 9, W(2.5, 2.4, { w: 34, h: 5, gustS: 1 })),
     new Room('Gust Crumble', 'A crumbling bridge with two gaps only a tailwind gust carries you over.', 40)
