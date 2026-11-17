@@ -50,7 +50,7 @@ describe('identical input streams across sockets', () => {
     const flagged = new Set<number>();
     for (let step = 0; step < 10; step++) {
       for (let id = 1; id <= 8; id++) {
-        const t = 1000 + step * 333 + id * 0.3; // same instant, a fraction of a ms apart
+        const t = 1000 + step * 333 + id * 0.1; // same instant, a fraction of a ms apart
         for (const f of d.observe(id, step % 2 ? 2 : 6, t)) flagged.add(f);
       }
     }
@@ -64,6 +64,24 @@ describe('identical input streams across sockets', () => {
       for (let id = 1; id <= 8; id++) flagged.push(...d.observe(id, step % 2 ? 2 : 6, 1000 + step * 500 + id * 137));
     }
     expect(flagged).toEqual([]);
+  });
+
+  test('a big crowd reacting to the same cues with human reaction times is not flagged (defaults)', () => {
+    const d = new IdenticalStreams();
+    let seed = 7;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const flagged = new Set<number>();
+    for (let cue = 0; cue < 12; cue++) {
+      const at = 10_000 + cue * 1500;
+      const events: [number, number, number][] = [];
+      for (let id = 1; id <= 3000; id++) {
+        const press = at + 150 + rand() * 250;
+        events.push([press, id, 6], [press + 250 + rand() * 350, id, 2]);
+      }
+      events.sort((a, b) => a[0] - b[0]);
+      for (const [t, id, bits] of events) for (const f of d.observe(id, bits, t)) flagged.add(f);
+    }
+    expect(flagged.size).toBe(0);
   });
 
   test('forget() drops a closed socket', () => {

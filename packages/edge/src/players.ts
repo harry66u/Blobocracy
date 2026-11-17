@@ -18,6 +18,7 @@ export interface CrowdOptions {
 
 interface Player {
   id: number;
+  ip: string;
   ipk: string;
   sid: string | undefined;
   watcher: boolean;
@@ -56,7 +57,7 @@ export class EdgeCrowd {
   private ipActive = new Map<string, number>();
   private oldestInput = 0;
   private quota: number;
-  private counters = { rateLimitedInputs: 0, influenceCappedIps: 0, flagged: { rate: 0, regular: 0, identical: 0 } };
+  private counters = { rateLimitedInputs: 0, influenceCappedIps: 0, influenceCappedIpsPeak: 0, flagged: { rate: 0, regular: 0, identical: 0 } };
 
   constructor(private o: CrowdOptions) {
     this.quota = o.sampleQuota;
@@ -65,7 +66,7 @@ export class EdgeCrowd {
 
   add(id: number, ip: string, sid?: string, watcher = false): void {
     const p: Player = {
-      id, ipk: ipKey(ip), sid, watcher, bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false,
+      id, ip, ipk: ipKey(ip), sid, watcher, bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false,
       pending: -1, rate: new RateLimiter(this.o.rateLimit), timing: new TimingMonitor(), flag: null, sampleId: -1,
     };
     const remembered = sid ? this.flagsBySid.get(sid) : undefined;
@@ -173,6 +174,7 @@ export class EdgeCrowd {
       }
     }
     this.counters.influenceCappedIps = capped;
+    if (capped > this.counters.influenceCappedIpsPeak) this.counters.influenceCappedIpsPeak = capped;
     const oldestInputAt = this.oldestInput;
     this.oldestInput = 0;
     return {
@@ -193,8 +195,19 @@ export class EdgeCrowd {
       flaggedNow,
       rateLimitedInputs: this.counters.rateLimitedInputs,
       influenceCappedIps: this.counters.influenceCappedIps,
+      influenceCappedIpsPeak: this.counters.influenceCappedIpsPeak,
       flagged: { ...this.counters.flagged },
     };
+  }
+
+  /** Currently flagged players (address and reason), for the admin view; at most `limit`. */
+  flaggedList(limit = 1000): { ip: string; reason: FlagReason }[] {
+    const out: { ip: string; reason: FlagReason }[] = [];
+    for (const p of this.players.values()) {
+      if (out.length >= limit) break;
+      if (p.flag) out.push({ ip: p.ip, reason: p.flag });
+    }
+    return out;
   }
 
   private isActive(p: Player, nowMs: number): boolean {

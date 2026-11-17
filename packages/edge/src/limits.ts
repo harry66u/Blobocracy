@@ -66,27 +66,31 @@ export class TimingMonitor {
 
 /**
  * Many sockets producing the same input stream (one script driving a farm). Each socket's last
- * `minChanges` changes (bits plus the 100 ms tick they happened in) form a fingerprint; when
- * `minGroup` sockets share one, they are all flagged. Real people pressing the same thing never
- * line up to the same 100 ms over several changes in a row.
+ * `minChanges` changes (bits plus the `binMs` slot they happened in) form a fingerprint; when
+ * `minGroup` sockets share one, they are all flagged. People reacting to the same moment still
+ * spread over a few hundred ms, so even thousands of them never line up to the same 25 ms over
+ * eight changes in a row (the load test checks this with 3,500 bots reacting to the same cues),
+ * while one script's sockets arrive within a millisecond or two of each other.
  */
 export class IdenticalStreams {
   private readonly minGroup: number;
   private readonly minChanges: number;
+  private readonly binMs: number;
   private streams = new Map<number, string[]>();
   private fpOf = new Map<number, string>();
   private groups = new Map<string, Set<number>>();
 
-  constructor(o: { minGroup?: number; minChanges?: number } = {}) {
+  constructor(o: { minGroup?: number; minChanges?: number; binMs?: number } = {}) {
     this.minGroup = o.minGroup ?? 5;
-    this.minChanges = o.minChanges ?? 6;
+    this.minChanges = o.minChanges ?? 8;
+    this.binMs = o.binMs ?? 25;
   }
 
   /** Records a change; returns the sockets to flag now (empty almost always). */
   observe(id: number, bits: number, nowMs: number): number[] {
     let s = this.streams.get(id);
     if (!s) { s = []; this.streams.set(id, s); }
-    s.push(`${bits}@${Math.floor(nowMs / 100)}`);
+    s.push(`${bits}@${Math.floor(nowMs / this.binMs)}`);
     if (s.length > this.minChanges) s.shift();
     this.unlink(id);
     if (s.length < this.minChanges) return [];

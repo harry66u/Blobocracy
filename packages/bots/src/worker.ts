@@ -116,9 +116,12 @@ function startProfile(b: Bot) {
       break;
     }
     case 'perfect-timing': {
-      // A metronome: right held, jump toggled on exact 200 ms boundaries of the clock.
-      const tick = () => { send(b, b.bits & J ? R : R | J); later(b, 200 - (Date.now() % 200), tick); };
-      later(b, 200 - (Date.now() % 200), tick);
+      // A metronome: right held, jump toggled every 200 ms exactly (each bot on its own phase,
+      // so it is the timing check that catches them, not the identical-stream one).
+      const phase = Math.random() * 200;
+      const wait = () => 200 - ((Date.now() - phase) % 200);
+      const tick = () => { send(b, b.bits & J ? R : R | J); later(b, wait(), tick); };
+      later(b, wait(), tick);
       break;
     }
     case 'farm': {

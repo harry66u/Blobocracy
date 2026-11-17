@@ -12,6 +12,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { runBots } from '../packages/bots/src/main';
+import { planBots } from '../packages/bots/src/profiles';
 
 const arg = (name: string, fallback: string) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1]! : fallback; };
 const count = Number(arg('count', '5000'));
@@ -87,10 +88,19 @@ const relays = end.relays.map((r: any) => {
     degraded: st.degraded, framesIn: st.framesIn, clientToEdgeMs: st.clientToEdgeMs,
     defenses: {
       rejected: st.rejected, rateLimitedInputs: st.rateLimitedInputs, flagged: st.flagged, flaggedNow: st.flaggedNow,
-      influenceCappedIps: st.influenceCappedIps, replaced: st.replaced,
+      influenceCappedIpsPeak: st.influenceCappedIpsPeak, replaced: st.replaced,
     },
   };
 });
+// Which bots got shadow-ignored, by profile (the plan is deterministic, so IP → profile).
+const urls = EDGES.map((p) => `ws://127.0.0.1:${p}/ws`);
+const profileOf = new Map(planBots(count, 'mixed', urls).map((b) => [b.ip, b.profile]));
+const flaggedByProfile: Record<string, Record<string, number>> = {};
+for (const r of end.relays) for (const f of r.stats?.flaggedList ?? []) {
+  const p = profileOf.get(f.ip) ?? 'unknown';
+  const t = (flaggedByProfile[p] ??= {});
+  t[f.reason] = (t[f.reason] ?? 0) + 1;
+}
 const players = end.online;
 const expected = relays.reduce((a: number, r: any) => a + (r.connections - r.watchers) * end.frameHz + r.watchers * end.frameHz / 2, 0);
 const c2e = relays.map((r: any) => r.clientToEdgeMs).filter(Boolean);
@@ -107,7 +117,7 @@ const result = {
     } : null,
     pingRtt: s.rtt.summary(),
   },
-  relays, budget: end.budget, world: end.world,
+  flaggedByProfile, relays, budget: end.budget, world: end.world,
 };
 mkdirSync('tools/out', { recursive: true });
 writeFileSync(`tools/out/loadtest-${count}.json`, JSON.stringify(result, null, 2));

@@ -3,9 +3,8 @@
 // (death, new zone, passing the record) are choreographed by the Director and the
 // CameraRig; sound comes from the synthesized GameAudio module.
 import { createGameAudio } from './audio/index.ts';
-import { AudioCues } from './audiocues.ts';
 import './fonts.css';
-import { DOT_EMPTY, DOT_LEFT, DOT_RIGHT, LEVEL1, progressOf, tileAt, zoneAt, type ServerEvent } from '@blobocracy/shared';
+import { LEVEL1, progressOf, type ServerEvent } from '@blobocracy/shared';
 import { CameraRig } from './camera.ts';
 import { Director } from './director.ts';
 import { connect } from './net.ts';
@@ -15,20 +14,14 @@ import { InputState, isGameKey } from './input.ts';
 import { causeName, DEATH_SHAKE, swoopDuration } from './moments.ts';
 import { predict, smooth } from './predict.ts';
 import { mountTouchControls } from './render/touch.ts';
-import { renderFrame, type Scene, type SceneDot, type SceneLevel } from './render/scene.ts';
+import { renderFrame, type Scene, type SceneDot } from './render/scene.ts';
+import { composeScene, sceneBlob, sceneDots, sceneLevelOf, WorldSounds } from './scenemap.ts';
 import { loadMuted, loadReducedMotion, mountHudControls, saveMuted, saveReducedMotion } from './settings.ts';
 import { createCanvasView, loadFonts } from './view.ts';
 
 const level = LEVEL1;
 // One SceneLevel object for the whole session: the renderer caches level chunks per object.
-const sceneLevel: SceneLevel = {
-  width: level.width,
-  height: level.height,
-  tileAt: (tx, ty) => tileAt(level, tx, ty),
-  zones: level.zones,
-  entities: level.entities,
-};
-const progressX = (p: number) => level.spawn.x + p * (level.goalX - level.spawn.x);
+const sceneLevel = sceneLevelOf(level);
 
 const statusEl = document.getElementById('status')!;
 const announceEl = document.getElementById('announce')!;
@@ -38,7 +31,7 @@ const loadingDeathsEl = document.getElementById('loading-deaths');
 let reduced = loadReducedMotion();
 let muted = loadMuted();
 const audio = createGameAudio();
-const cues = new AudioCues(LEVEL1);
+const sounds = new WorldSounds(LEVEL1);
 audio.setMuted(muted);
 
 const announce = (text: string) => { announceEl.textContent = text; };
@@ -136,19 +129,7 @@ mountTouchControls(document.body, input);
 
 let pos: { x: number; y: number } | null = null;
 let lastT = performance.now() / 1000;
-let prevGrounded = true;
-let prevVy = 0;
 const dots: SceneDot[] = [];
-
-function sceneDots(d: Uint8Array, j: Uint8Array): SceneDot[] {
-  dots.length = 0;
-  for (let i = 0; i < d.length; i++) {
-    const code = d[i]!;
-    if (code === DOT_EMPTY) continue; // nobody in this slot
-    dots.push({ slot: i, dir: code === DOT_LEFT ? -1 : code === DOT_RIGHT ? 1 : 0, jump: j[i] === 1 });
-  }
-  return dots;
-}
 
 let loadingGone = false;
 function hideLoading(): void {
@@ -176,27 +157,12 @@ function frame(): void {
     runTime = f.phase === 'running' ? f.runTime + Math.max(0, ahead) : f.runTime;
     pos = pos ? smooth(pos, body, dt) : { x: body.x, y: body.y };
     const dead = f.phase === 'dying';
-    blob = { x: pos.x, y: pos.y, vx: body.vx, vy: body.vy, grounded: body.grounded, facing: body.facing, pull: f.pull, strain: f.strain, dead, deathCause: dead ? deathCause : null };
+    blob = sceneBlob(pos, body, f, deathCause);
     online = f.online;
     // World sounds: saws buzz when close, presses slam, crumbles crack, the crowd hums.
-    if (f.phase === 'running') {
-      audio.sawNear(cues.sawProximity(runTime, pos.x, pos.y));
-      for (const d of cues.slams(runTime, pos.x)) audio.pressSlam(d);
-      if (cues.newCrumbles(f.crumbles) > 0) audio.crumble();
-    }
-    audio.setCrowd(f.online, f.strain);
+    sounds.world(f, pos, runTime, audio);
     if (!keepDeathCard(cardRun === null ? null : { run: cardRun }, f)) { cardRun = null; deathCause = dead ? deathCause : null; }
-    if (!dead) {
-      if (!prevGrounded && body.grounded && prevVy > 6) {
-        audio.land(Math.min(1, prevVy / 22));
-      }
-      if (prevGrounded && !body.grounded && body.vy < -2) {
-        if (AudioCues.isSpring(body.vy)) audio.spring();
-        else audio.jump(Math.min(1, -body.vy / 18));
-      }
-    }
-    prevGrounded = body.grounded;
-    prevVy = body.vy;
+    sounds.body(f, body, audio);
   } else {
     pos = pos ?? { x: level.spawn.x, y: level.spawn.y };
     blob = { x: pos.x, y: pos.y, vx: 0, vy: 0, grounded: true, facing: 1, pull: 0, strain: 0, dead: false };
@@ -213,42 +179,16 @@ function frame(): void {
   cam = { x: cam.x + shake.x, y: cam.y + shake.y };
   // during the swoop the progress marker slides back and the sky rewinds with the camera
   const viewCenterX = cam.x + (L.lookAhead);
-  const shownProgress = swoopK === null ? progress : swoopFromProgress + (progress - swoopFromProgress) * swoopK;
-  const skyX = swoopK === null ? blob.x : viewCenterX;
 
   const bits = input.bits;
-  const scene: Scene = {
-    level: sceneLevel,
-    blob,
-    dots: f ? sceneDots(f.dots, f.dotJump) : [],
+  const scene: Scene = composeScene({
+    level, sceneLevel, frame: f, blob, runTime, online, muted, reduced, progress,
+    dots: f ? sceneDots(f.dots, f.dotJump, dots) : [],
     you: { dir: (bits & 1) && !(bits & 2) ? -1 : (bits & 2) && !(bits & 1) ? 1 : 0, jump: (bits & 4) !== 0 },
-    hud: {
-      deaths: d.deaths,
-      deathsJustTicked: d.deathsJustTicked,
-      online,
-      record: d.record,
-      progress: shownProgress,
-      recordLabel: d.recordLabel,
-      recordPop: d.recordPop,
-      muted,
-    },
-    deathCard: cardRun === null ? null : d.card,
-    zoneSky: zoneAt(level, skyX).sky,
-    paused: f?.phase === 'paused',
-    runTime,
-    chompStart: f?.chompStart ?? null,
-    crumbles: f ? f.crumbles.map((c) => ({ tx: c.tile % level.width, ty: Math.floor(c.tile / level.width), at: c.at })) : [],
-    fx: {
-      reduced,
-      freeze: d.freeze,
-      flash: d.flash,
-      vignette: d.vignette,
-      fade: rig.swoopFade,
-      banner: d.banner,
-      recordFlag: d.flagProgress === null ? null : { x: progressX(d.flagProgress), label: `${Math.round(d.flagProgress * 100)}%` },
-      skyRate: swoopK !== null ? (reduced ? 50 : 3.5) : reduced ? 0.6 : 1,
-    },
-  };
+    director: d,
+    showCard: cardRun !== null,
+    swoopK, swoopFade: rig.swoopFade, viewCenterX, swoopFromProgress,
+  });
 
   // While the death card is up inputs don't count; fade the touch buttons so a pit death stays visible.
   document.body.classList.toggle('bl-dying', blob.dead);

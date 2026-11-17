@@ -338,6 +338,7 @@ export async function startEdge(o: EdgeOptions) {
     name, simUp: link.up, degraded: load.degraded, cpu: Math.round(cpu * 1000) / 1000, rssMb: Math.round(rssMb),
     backpressure, policy, ips: ipConns.size, ...crowd.stats(), ...counters,
     bytesSent: bytesTotal, clientToEdgeMs: o.latencyProbe ? clientToEdge.summary() : undefined,
+    flaggedList: crowd.flaggedList(1000),
   });
   const statsTimer = setInterval(() => { link.send(JSON.stringify({ c: 'stats', stats: stats() })); }, 2000);
 
