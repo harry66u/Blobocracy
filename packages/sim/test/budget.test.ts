@@ -45,6 +45,16 @@ describe('budget governor', () => {
     expect(levels).toContain('50:3');
   });
 
+  test('sub-cent budgets (fire drills) alert at each threshold, not all at once at $0', () => {
+    const alerts: string[] = [];
+    const b = new Budget(cfg({ monthlyUsd: 0.0012, alertUsd: 0.0003 }), T0, null, (t) => alerts.push(t));
+    b.tick(T0);
+    expect(alerts).toEqual([]);
+    for (let i = 1; i <= 13; i++) { b.addBytes(0.005 * GB); b.tick(T0 + i); } // $0.0001 a step
+    expect(alerts.map((a) => a.match(/alert amount|\d+% of/)![0])).toEqual(['alert amount', '50% of', '70% of', '90% of', '100% of']);
+    expect(alerts[0]).toContain('$0.00030 so far');
+  });
+
   test('machine time accrues by the hour', () => {
     const b = new Budget(cfg({ baseMonthlyUsd: 73 }), T0, null, () => {});
     b.tick(T0 + 10 * 3_600_000);

@@ -1,0 +1,23 @@
+PASS  iMessage / Facebook crawler gets 200 text/html
+PASS  Discord crawler gets 200 text/html
+PASS  X crawler gets 200 text/html
+PASS  Reddit crawler gets 200 text/html
+PASS  Slack crawler gets 200 text/html
+PASS  og:image and og:url are absolute https URLs (every unfurler needs this)
+PASS  no localhost or placeholder URLs in the page
+PASS  og:title present and ≤ 70 chars (48)
+PASS  og:description 50–200 chars (122)
+PASS  twitter:card is summary_large_image (big image on X)
+PASS  twitter:image matches og:image
+PASS  og:image:width/height declared as 1200x630 (lets Facebook/iMessage render on first share)
+PASS  og:image:alt describes the image
+PASS  theme-color set (#5FBFFF; Discord uses it for the embed stripe)
+PASS  og image is served as image/png
+PASS  og image really is 1200x630
+PASS  og image is 213 KB (< 300 KB so WhatsApp shows it; X allows 5 MB)
+PASS  /apple-touch-icon.png is served
+PASS  /favicon.ico is served
+PASS  /icon.svg is served
+PASS  /site.webmanifest is served
+PASS  /robots.txt is served
+PASS  robots.txt does not block crawlers from the page

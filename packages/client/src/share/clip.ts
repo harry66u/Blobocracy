@@ -46,9 +46,9 @@ function makeDrawer(input: ClipInput, canvas: HTMLCanvasElement) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const u = CLIP_W / 540;
     const text = input.host;
-    ctx.font = `800 ${17 * u}px ${FONT_TEXT}`;
-    const w = ctx.measureText(text).width + 32 * u, h = 36 * u;
-    const x = (CLIP_W - w) / 2, y = CLIP_H - 150 * u;
+    ctx.font = `800 ${14 * u}px ${FONT_TEXT}`;
+    const w = ctx.measureText(text).width + 28 * u, h = 28 * u;
+    const x = (CLIP_W - w) / 2, y = 10 * u; // top edge: never covers the blob, even in a pit
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, h / 2);
     ctx.fillStyle = CREAM;
@@ -70,12 +70,15 @@ function makeDrawer(input: ClipInput, canvas: HTMLCanvasElement) {
         const t = tStart + i / FPS;
         const s = frameAt(frames, t);
         cam = camera(L, s, cam, 1 / FPS);
-        r.render(ctx, L, cam, replayScene(input.level, input.sceneLevel, frames, t, hud), t);
-        brand();
+        const scene = replayScene(input.level, input.sceneLevel, frames, t, hud);
         if (i === playN - 1) {
+          // the end card sits on this last moment, drawn without the HUD and death card
+          r.render(ctx, L, cam, scene, t, { hud: false });
           still = makeCanvas(CLIP_W, CLIP_H);
           still.getContext('2d')!.drawImage(canvas, 0, 0);
         }
+        r.render(ctx, L, cam, scene, t);
+        brand();
         return true;
       }
       // end card: the last frame dimmed, the card sliding up
@@ -84,7 +87,7 @@ function makeDrawer(input: ClipInput, canvas: HTMLCanvasElement) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = 1;
       if (still) ctx.drawImage(still, 0, 0);
-      ctx.fillStyle = `rgba(42,27,61,${0.45 * ease})`;
+      ctx.fillStyle = `rgba(42,27,61,${0.55 * ease})`;
       ctx.fillRect(0, 0, CLIP_W, CLIP_H);
       ctx.save();
       ctx.globalAlpha = ease;

@@ -36,3 +36,29 @@ Any number works. Try 5, 30 and 300 to feel how blending changes with crowd size
 npm test
 npm run typecheck
 ```
+
+## Launch features
+
+Share card, personal stats, link previews, analytics, cost cap and the launch kit. Plan: `docs/superpowers/plans/2026-11-17-launch-essentials.md`. Launch kit: `docs/launch/`. Screenshots: `design/screenshots/launch/`.
+
+Run the production build locally (the game server serves the built client):
+
+```bash
+SITE_URL=https://blobocracy.com npm run build
+```
+
+```bash
+STATS_KEY=pick-a-secret ADMIN_KEY=another-secret npm start
+```
+
+Then open http://localhost:8080, and http://localhost:8080/stats?key=pick-a-secret for the stats page. `SITE_URL` is required for production builds so link previews always carry the real address. All server settings are listed at the top of `packages/sim/src/main.ts`.
+
+| Command | What it does |
+|---|---|
+| `npm run og` | Re-renders the link preview image and icons from the game's renderer into `packages/client/public/` |
+| `npx tsx tools/unfurl-check.ts` | Fetches the built page like the iMessage/Discord/X/Reddit/Slack crawlers, checks every tag and the image, draws approximate previews |
+| `npx tsx tools/launch-shots.ts` | Plays the production build until a death and screenshots the share button, panel, image, clip, stats page and packed screen |
+| `npm run loadtest -- --peak 6000 --ramp 10 --hold 46` | Spike load test with real WebSocket players against the real server process |
+| `npx tsx tools/capdrill.ts` | Cost-cap fire drill: tiny budget, local webhook, checks every alert and every step of the cap |
+
+Results of the last load test and drill: `docs/launch/readiness.md`.

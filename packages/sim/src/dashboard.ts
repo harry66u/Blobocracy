@@ -60,6 +60,8 @@ export function renderDashboard(a: Analytics, nowMs: number, days: number, siteU
   const b = extra.budget;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>Blobocracy stats</title><style>
+@font-face{font-family:'Atkinson Hyperlegible Next';font-weight:400 800;font-display:swap;src:url(/fonts/atkinson-hyperlegible-next-latin.woff2) format('woff2')}
+@font-face{font-family:'Bagel Fat One';font-display:swap;src:url(/fonts/bagel-fat-one-latin.woff2) format('woff2')}
 :root{--bg:#FFF1D6;--card:#FFFBF1;--ink:#2A1B3D;--soft:rgba(42,27,61,.7);--line:rgba(42,27,61,.14);--bar:#2B7BC4;--accent:#FFD21F}
 @media (prefers-color-scheme:dark){:root{--bg:#1E1430;--card:#2A1E40;--ink:#FFF1D6;--soft:rgba(255,241,214,.72);--line:rgba(255,241,214,.16);--bar:#7CC3FF}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 'Atkinson Hyperlegible Next',system-ui,sans-serif;padding:16px}

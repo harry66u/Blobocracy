@@ -57,7 +57,7 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void, onFrame:
       if ('tick' in d) { state.latest = d; state.latestAt = performance.now(); onFrame(d); }
       else state.rttMs = state.rttMs * 0.7 + ((Math.floor(performance.now()) >>> 0) - d.t) * 0.3;
     };
-    ws.onclose = (e) => drop(e.code === CLOSE_PACKED);
+    ws.onclose = (e) => drop(e?.code === CLOSE_PACKED);
   };
 
   /** Forget the current socket (closed or silently dead) and schedule a fresh one. */

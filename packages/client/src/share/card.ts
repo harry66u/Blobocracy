@@ -40,10 +40,15 @@ export async function renderDeathMoment(
 ): Promise<HTMLCanvasElement> {
   const canvas = makeCanvas(w, h);
   const ctx = canvas.getContext('2d')!;
-  const L = computeLayout(w / 2, h / 2, 2);
-  const r = new Renderer();
   const tDeath = deathTick / TICK_HZ;
   const t0 = Math.max(frames[0]!.tick / TICK_HZ, tDeath - 1.2), t1 = tDeath + afterDeathS;
+  // Zoom in just enough that the blob sits `blobAt` down the frame without the camera
+  // looking below the level (pit deaths happen low down).
+  const base = computeLayout(w / 2, h / 2, 2);
+  const deadY = frameAt(frames, t1).y;
+  const maxRows = Math.max(4, (BOTTOM_ROW - deadY) / (1 - blobAt));
+  const L: Layout = { ...base, tile: Math.min(base.h / 6, Math.max(base.tile, base.h / maxRows)) };
+  const r = new Renderer();
   for (let t = t0, i = 0; t <= t1 + 1e-6; t += 1 / 30, i++) {
     const s = frameAt(frames, t);
     r.render(ctx, L, centeredCam(L, s, blobAt), replayScene(level, sceneLevel, frames, t, null), t, { hud: false });
@@ -249,14 +254,29 @@ function soClose(ctx: Ctx, x: number, y: number, u: number): void {
   ctx.restore();
 }
 
-/** The big "death #1,234" header. */
-function deathHeader(ctx: Ctx, cx: number, y: number, d: DeathShare, u: number): void {
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  outlined(ctx, `#${fmt(d.death)}`, cx, y, `${72 * u}px ${FONT_DISPLAY}`, BLOB, 10 * u);
-  ctx.font = `800 ${17 * u}px ${FONT_TEXT}`;
+/** The "blob death #1,234" sticker: its own card, so it reads over any scene. */
+function deathHeader(ctx: Ctx, cx: number, cy: number, d: DeathShare, u: number): number {
+  const num = `#${fmt(d.death)}`;
+  const label = 'blob death';
+  const fLabel = `800 ${18 * u}px ${FONT_TEXT}`, fNum = `${50 * u}px ${FONT_DISPLAY}`;
+  ctx.font = fLabel;
+  const lw = ctx.measureText(label).width;
+  ctx.font = fNum;
+  const nw = ctx.measureText(num).width;
+  const gap = 14 * u, padX = 22 * u, h = 72 * u;
+  const w = lw + gap + nw + padX * 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate((2 * Math.PI) / 180);
+  card(ctx, -w / 2, -h / 2, w, h, u);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = fLabel;
   ctx.fillStyle = INK;
-  ctx.fillText('blob death', cx, y - 74 * u);
+  ctx.fillText(label, -w / 2 + padX, 2 * u);
+  outlined(ctx, num, -w / 2 + padX + lw + gap, 5 * u, fNum, BLOB, 8 * u);
+  ctx.restore();
+  return h;
 }
 
 function wordmark(ctx: Ctx, x: number, y: number, u: number, align: CanvasTextAlign = 'left'): void {
@@ -288,8 +308,8 @@ export function drawShareOverlay(ctx: Ctx, W: number, H: number, d: DeathShare, 
   const cardW = W - 48 * u;
   const cardH = cardBody(ctx, d, 24 * u, 0, cardW, u, zones, false);
   const footerH = 70 * u;
-  const cardY = layout === 'post' ? H - footerH - cardH - 8 * u : H * 0.46;
-  deathHeader(ctx, W / 2, layout === 'post' ? 182 * u : 330 * u, d, u);
+  const cardY = layout === 'post' ? H - footerH - cardH - 8 * u : 330 * u;
+  deathHeader(ctx, W / 2, layout === 'post' ? 118 * u : 240 * u, d, u);
 
   const cx = W / 2, cyMid = cardY + cardH / 2;
   ctx.save();
@@ -302,7 +322,7 @@ export function drawShareOverlay(ctx: Ctx, W: number, H: number, d: DeathShare, 
   ctx.restore();
 
   // footer: where to play
-  const fy = layout === 'post' ? H - footerH / 2 + 2 * u : cardY + cardH + 110 * u;
+  const fy = layout === 'post' ? H - footerH / 2 + 2 * u : cardY + cardH + 120 * u;
   if (layout === 'story') {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
@@ -318,7 +338,7 @@ export function drawShareOverlay(ctx: Ctx, W: number, H: number, d: DeathShare, 
 export async function renderShareImage(
   level: Level, sceneLevel: SceneLevel, frames: readonly StateFrame[], deathTick: number, d: DeathShare, host: string,
 ): Promise<{ canvas: HTMLCanvasElement; blob: Blob }> {
-  const canvas = await renderDeathMoment(level, sceneLevel, frames, deathTick, IMAGE_W, IMAGE_H, 0.34);
+  const canvas = await renderDeathMoment(level, sceneLevel, frames, deathTick, IMAGE_W, IMAGE_H, 0.27);
   const ctx = canvas.getContext('2d')!;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawShareOverlay(ctx, IMAGE_W, IMAGE_H, d, host, level.zones.length, 'post');

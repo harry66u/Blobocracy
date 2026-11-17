@@ -13,6 +13,18 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [x] Independent code review; 6 important findings fixed
 - [x] Hand-off: local link, exact steps to play, command to add a few hundred bots (see README)
 
+## Launch essentials (built ahead of milestones 4–7; see docs/launch/)
+- [x] Share after each death: image (1080x1350), 9 s vertical clip (MP4), plain text line; one tap opens the phone's share sheet
+- [x] Anonymous personal stats in the browser: deaths you were part of, best run, days played
+- [x] Link previews: Open Graph/Twitter tags, preview image and icons drawn by the game's renderer, crawler check (23/23)
+- [x] First-party analytics (counters only, no cookies/IPs): sources, time spent, next-day and 7-day return, shares; private /stats page; tracking links
+- [x] Server serves the production build; build refuses to run without SITE_URL
+- [x] Budget governor with webhook alerts, capacity cap, packed screen, live budget raise (the single-process part of milestone 4)
+- [x] Spike load test 30 → 6,000 players and cost-cap fire drill (15/15), results in docs/launch/readiness.md
+- [x] Launch kit: Show HN fact sheet (no AI-written text, per HN rules), r/WebGames and r/IndieGaming drafts, skipped-subreddit notes, launch day checklist (ET)
+- [ ] Real unfurl test in iMessage, Discord, X, Reddit on the deployed URL (needs deployment)
+- [ ] Load test against the deployed machine; set MAX_PLAYERS for its CPU
+
 ## Milestone 2: the whole level
 - [ ] Zones 3–6 with crushers, moving platforms, crumbling blocks, springs, saws, conveyors, the Big Chomp
 - [ ] Level preview image

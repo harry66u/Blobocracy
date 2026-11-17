@@ -63,6 +63,7 @@ function onEvent(e: ServerEvent): void {
   const now = performance.now() / 1000;
   switch (e.t) {
     case 'packed':
+      hud.deaths = e.deaths; // the HUD behind the packed card agrees with it
       showPacked(e.deaths, e.online);
       break;
     case 'welcome':
@@ -96,7 +97,11 @@ function onEvent(e: ServerEvent): void {
 }
 
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const net = connect(`${proto}://${location.host}/ws`, onEvent, (f) => recorder.push(f));
+const net = connect(`${proto}://${location.host}/ws`, onEvent, (f) => {
+  recorder.push(f);
+  // Holding a key across a reset makes you part of the new run too.
+  if (input.bits && f.phase === 'running') pressedRun = f.run;
+});
 const input = new InputState((bits) => {
   net.sendInput(bits);
   if (bits) {

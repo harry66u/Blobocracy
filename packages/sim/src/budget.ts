@@ -100,7 +100,7 @@ export class Budget {
     const byUsd = new Map<number, string[]>();
     const add = (usd: number, what: string) => {
       if (usd <= 0) return;
-      const key = Math.round(usd * 100) / 100;
+      const key = keyOf(usd);
       byUsd.set(key, [...(byUsd.get(key) ?? []), what]);
     };
     add(this.cfg.alertUsd, `passed the alert amount ($${this.cfg.alertUsd})`);
@@ -110,7 +110,7 @@ export class Budget {
         this.state.alerted.push(usd);
         const lvl = this.computeLevel();
         const effect = this.cfg.mode === 'alert' ? 'Alert-only mode: nothing is being limited.' : `Game is now: ${LEVEL_NAMES[lvl]}.`;
-        this.alert(`Blobocracy spend estimate ${whats.join(' and ')}: $${spent.toFixed(2)} so far in ${month}. ${effect}`);
+        this.alert(`Blobocracy spend estimate ${whats.join(' and ')}: ${usdText(spent)} so far in ${month}. ${effect}`);
       }
     }
     const before = this.levelNow;
@@ -124,7 +124,7 @@ export class Budget {
   setMonthly(usd: number, nowMs: number): void {
     this.cfg = { ...this.cfg, monthlyUsd: usd };
     // thresholds above the new spend may fire again at their new amounts
-    this.state.alerted = this.state.alerted.filter((a) => a <= this.spentUsd && a === this.cfg.alertUsd);
+    this.state.alerted = this.state.alerted.filter((a) => a <= this.spentUsd && a === keyOf(this.cfg.alertUsd));
     this.tick(nowMs);
   }
 
@@ -143,7 +143,10 @@ export class Budget {
   }
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+/** Dollar amounts to 6 decimals: whole cents would merge every threshold of a sub-cent test budget into $0. */
+const keyOf = (usd: number) => Math.round(usd * 1e6) / 1e6;
+const round2 = (n: number) => (Math.abs(n) >= 1 ? Math.round(n * 100) / 100 : keyOf(n));
+const usdText = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : `$${n.toPrecision(2)}`);
 
 /** How many players may be connected at this budget level. */
 export function capacityFor(level: BudgetLevel, caps: { max: number; base: number; packed: number }): number {
