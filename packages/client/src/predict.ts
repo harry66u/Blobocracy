@@ -1,4 +1,4 @@
-import { BLEND, DT, PHYS, stepBody, type Body, type Level, type StateFrame } from '@blobocracy/shared';
+import { BLEND, DT, PHYS, stepBody, type Body, type Dynamics, type Level, type StateFrame } from '@blobocracy/shared';
 
 const MAX_AHEAD_S = 0.15;
 const SNAP_TILES = 3;
@@ -23,6 +23,11 @@ export function bodyFromFrame(f: StateFrame): Body {
   };
 }
 
+/** The run's hazard state as carried by a server frame: clock, touched crumbles, chomp. */
+export function dynamicsFromFrame(f: StateFrame): Dynamics {
+  return { t: f.runTime, crumbles: new Map(f.crumbles.map((c) => [c.tile, c.at])), chompStart: f.chompStart };
+}
+
 /**
  * Runs the shared physics forward from a server frame using that frame's blended
  * control, so the blob appears where the server will have it by now.
@@ -34,8 +39,9 @@ export function predict(frame: StateFrame, level: Level, aheadS: number): Body {
   const steps = Math.floor(Math.min(Math.max(aheadS, 0), MAX_AHEAD_S) / DT + 1e-9);
   const curved = Math.sign(frame.pull) * Math.pow(Math.abs(frame.pull), BLEND.moveCurve);
   const control = { move: curved * (1 - BLEND.strainSlow * frame.strain), jumpHeld: frame.jumpHeld };
+  const dyn = dynamicsFromFrame(frame);
   for (let i = 0; i < steps; i++) {
-    if (stepBody(b, control, level)) break;
+    if (stepBody(b, control, level, dyn)) break;
   }
   return b;
 }

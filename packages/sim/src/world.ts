@@ -1,7 +1,7 @@
 import {
   DEATH_FREEZE_S, DEATH_HOLD_S, TICK_HZ,
-  blend, createBody, stepBody, progressOf, zoneAt,
-  type BlendOut, type Body, type Level, type ServerEvent, type VoteCounts,
+  blend, createBody, createDynamics, stepBody, progressOf, zoneAt,
+  type BlendOut, type Body, type Dynamics, type Level, type ServerEvent, type VoteCounts,
 } from '@blobocracy/shared';
 
 export interface WorldInit { deaths: number; record: { progress: number; run: number } | null }
@@ -20,8 +20,10 @@ const MIN_RECORD_FOR_NEAR_MISS = 0.1;
 export class World {
   readonly level: Level;
   tick = 0;
-  /** Ticks the current run has actually been running (drives hazard timing later). */
+  /** Ticks the current run has actually been running. */
   runTick = 0;
+  /** The run's clock, crumbles and Big Chomp; advanced only by running steps, fresh every run. */
+  dyn: Dynamics = createDynamics();
   run: number;
   deaths: number;
   phase: Phase = 'running';
@@ -58,7 +60,7 @@ export class World {
     this.runTick++;
 
     this.lastBlend = blend(votes, this.lastBlend.jumpHeld, this.lastBlend.freshHigh);
-    const cause = stepBody(this.body, this.lastBlend, this.level);
+    const cause = stepBody(this.body, this.lastBlend, this.level, this.dyn);
 
     const progress = progressOf(this.level, this.body.x);
     if (progress > this.maxProgress) this.maxProgress = progress;
@@ -96,6 +98,7 @@ export class World {
   private reset(events: ServerEvent[]): void {
     this.run++;
     this.body = createBody(this.level);
+    this.dyn = createDynamics();
     this.maxProgress = 0;
     this.zone = 0;
     this.runTick = 0;

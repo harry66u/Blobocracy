@@ -21,7 +21,18 @@ export interface StateFrame {
   dots: Uint8Array;
   /** Per crowd slot: 1 if holding jump, else 0. */
   dotJump: Uint8Array;
+  /** Run clock (seconds) that times every moving hazard; float32 on the wire. */
+  runTime: number;
+  /** Run time the Big Chomp was triggered, or null while it waits (NaN on the wire). */
+  chompStart: number | null;
+  /** Crumble tiles touched this run near the blob (tile index → run time first stood on). */
+  crumbles: { tile: number; at: number }[];
 }
+
+/** A frame carries at most this many touched crumbles (the ones nearest the blob). */
+export const MAX_FRAME_CRUMBLES = 16;
+/** Only crumbles within this many tiles of the blob go in a frame. */
+export const FRAME_CRUMBLE_RANGE = 40;
 
 /** JSON text-frame events from the server. */
 export type ServerEvent =
@@ -32,7 +43,8 @@ export type ServerEvent =
   | { t: 'reset'; run: number };
 
 const PHASES = ['running', 'dying', 'paused'] as const;
-const STATE_HEADER = 38;
+const STATE_HEADER = 46;
+const CRUMBLE_BYTES = 8;
 const F_GROUNDED = 1, F_FACING_RIGHT = 2, F_JUMP = 4, PHASE_SHIFT = 3;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -67,13 +79,21 @@ export function decodeClient(buf: ArrayBuffer): { type: 'input'; bits: number } 
   return null;
 }
 
-const stateSize = (slots: number) => STATE_HEADER + Math.ceil(slots / 4) + Math.ceil(slots / 8);
+/** Byte offset of the crumble count: after the header and both dot planes. */
+const crumblesAt = (slots: number) => STATE_HEADER + Math.ceil(slots / 4) + Math.ceil(slots / 8);
+const stateSize = (slots: number, crumbles: number) => crumblesAt(slots) + 1 + crumbles * CRUMBLE_BYTES;
 
-/** Encodes a state frame in the little-endian layout of plan Task 5 (≤ 86 bytes for 128 slots). */
+/**
+ * Encodes a state frame, little-endian: the 38-byte body/blend/crowd header of plan Task 5,
+ * f32 runTime and chompStart, the dot planes, then a u8 crumble count and (u32 tile, f32 at)
+ * per crumble. 95 bytes for 128 slots and no crumbles.
+ */
 export function encodeState(f: StateFrame): Uint8Array<ArrayBuffer> {
   const n = f.dots.length;
   if (n > 255 || f.dotJump.length !== n) throw new Error(`bad slot count ${n}/${f.dotJump.length}`);
-  const out = new Uint8Array(stateSize(n));
+  const k = f.crumbles.length;
+  if (k > MAX_FRAME_CRUMBLES) throw new Error(`too many crumbles ${k} (max ${MAX_FRAME_CRUMBLES})`);
+  const out = new Uint8Array(stateSize(n, k));
   const dv = new DataView(out.buffer);
   dv.setUint8(0, MSG_STATE);
   dv.setUint32(1, f.tick >>> 0, true);
@@ -91,11 +111,19 @@ export function encodeState(f: StateFrame): Uint8Array<ArrayBuffer> {
   dv.setUint32(29, f.online >>> 0, true);
   dv.setUint32(33, f.active >>> 0, true);
   dv.setUint8(37, n);
+  dv.setFloat32(38, f.runTime, true);
+  dv.setFloat32(42, f.chompStart ?? NaN, true);
   const jumpAt = STATE_HEADER + Math.ceil(n / 4);
   for (let i = 0; i < n; i++) {
     out[STATE_HEADER + (i >> 2)]! |= (f.dots[i]! & 3) << ((i & 3) * 2);
     if (f.dotJump[i]) out[jumpAt + (i >> 3)]! |= 1 << (i & 7);
   }
+  const c0 = crumblesAt(n);
+  dv.setUint8(c0, k);
+  f.crumbles.forEach((c, i) => {
+    dv.setUint32(c0 + 1 + i * CRUMBLE_BYTES, c.tile >>> 0, true);
+    dv.setFloat32(c0 + 5 + i * CRUMBLE_BYTES, c.at, true);
+  });
   return out;
 }
 
@@ -104,7 +132,10 @@ function decodeState(buf: ArrayBuffer): StateFrame | null {
   if (u8.length < STATE_HEADER) return null;
   const dv = new DataView(buf);
   const n = dv.getUint8(37);
-  if (u8.length !== stateSize(n)) return null;
+  const c0 = crumblesAt(n);
+  if (u8.length <= c0) return null;
+  const k = dv.getUint8(c0);
+  if (k > MAX_FRAME_CRUMBLES || u8.length !== stateSize(n, k)) return null;
   const flags = dv.getUint8(25);
   const phase = PHASES[(flags >> PHASE_SHIFT) & 3];
   if (!phase) return null;
@@ -116,6 +147,11 @@ function decodeState(buf: ArrayBuffer): StateFrame | null {
     dots[i] = dot;
     dotJump[i] = (u8[jumpAt + (i >> 3)]! >> (i & 7)) & 1;
   }
+  const crumbles: { tile: number; at: number }[] = [];
+  for (let i = 0; i < k; i++) {
+    crumbles.push({ tile: dv.getUint32(c0 + 1 + i * CRUMBLE_BYTES, true), at: dv.getFloat32(c0 + 5 + i * CRUMBLE_BYTES, true) });
+  }
+  const chompStart = dv.getFloat32(42, true);
   return {
     tick: dv.getUint32(1, true),
     run: dv.getUint32(5, true),
@@ -134,6 +170,9 @@ function decodeState(buf: ArrayBuffer): StateFrame | null {
     active: dv.getUint32(33, true),
     dots,
     dotJump,
+    runTime: dv.getFloat32(38, true),
+    chompStart: Number.isNaN(chompStart) ? null : chompStart,
+    crumbles,
   };
 }
 

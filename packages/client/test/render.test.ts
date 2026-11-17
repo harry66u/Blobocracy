@@ -2,6 +2,7 @@ import { makeEntity, type Entity } from '@blobocracy/shared';
 import { describe, expect, test } from 'vitest';
 import { dangerAhead } from '../src/render/blob.ts';
 import { crumbleGone, type DangerWorld } from '../src/render/danger.ts';
+import { chompCameraShift, crusherAnger } from '../src/render/entities.ts';
 import { homeOffset } from '../src/render/crowd.ts';
 import { traceLoops } from '../src/render/level.ts';
 import type { SceneLevel } from '../src/render/scene.ts';
@@ -114,6 +115,10 @@ describe('dangerAhead with moving things', () => {
     expect(dangerAhead(lv, blob, world([ch]))).toBe(false);
     expect(dangerAhead(lv, blob, world([ch], { chompStart: 0, runTime: 5 }))).toBe(true); // front at x = 0
   });
+  test('a chomp still asleep in its lair ahead is no danger', () => {
+    const lair = makeEntity({ kind: 'chomp', speed: 2 }, 0, 40, 0);
+    expect(dangerAhead(lv, blob, world([lair]))).toBe(false);
+  });
   test('crumble, spring and conveyor tiles are floor; a crumble being stood on is danger', () => {
     const m = level(['..........', '..........', '###~~*><##']);
     const b = { x: 1.5, y: 1.4, vx: 5, facing: 1 as const };
@@ -135,6 +140,37 @@ describe('dangerAhead with moving things', () => {
     expect(dangerAhead(g, b, world([]))).toBe(true);
     const mover = makeEntity({ kind: 'mover', w: 3, dx: 0, dy: 0, period: 2 }, 0, 4, 3);
     expect(dangerAhead(g, b, world([mover]))).toBe(false);
+  });
+});
+
+describe('chompCameraShift', () => {
+  test('on a phone a close chomp slides the view left, but keeps the blob within 60% of it', () => {
+    const s = chompCameraShift(10.3, 3.4, 2.6);
+    expect(s).toBeGreaterThan(2);
+    expect(3.4 + s).toBeLessThanOrEqual(0.6 * 10.3 + 1e-9);
+  });
+  test('no shift when far away, or on a wide view that already shows it', () => {
+    expect(chompCameraShift(10.3, 3.4, 20)).toBe(0);
+    expect(chompCameraShift(28.4, 9.6, 3)).toBe(0);
+  });
+  test('eases in continuously as the chomp approaches', () => {
+    let prev = chompCameraShift(10.3, 3.4, 9.5);
+    for (let d = 9.5; d >= 0; d -= 0.05) {
+      const s = chompCameraShift(10.3, 3.4, d);
+      expect(Math.abs(s - prev)).toBeLessThan(0.2);
+      prev = s;
+    }
+  });
+});
+
+describe('crusherAnger', () => {
+  const c = makeEntity({ kind: 'crusher', w: 2, drop: 3, period: 4 }, 0, 0, 0);
+  if (c.kind !== 'crusher') throw new Error('not a crusher');
+  test('grumpy while waiting, furious while slamming, winding up just before', () => {
+    expect(crusherAnger(c, 0.5)).toBe(0);
+    expect(crusherAnger(c, 2.0)).toBeGreaterThan(0.3);
+    expect(crusherAnger(c, 2.3)).toBe(1);
+    expect(crusherAnger(c, 3.9)).toBeLessThan(0.1);
   });
 });
 

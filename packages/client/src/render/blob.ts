@@ -3,36 +3,10 @@
 // sweat, alarm lines) when a hazard or gap is close ahead, sleeping when paused, and a
 // flattened pancake with X eyes when dead. Also owns jump/landing dust and the arc trail.
 import { BLOB, BLOB_SHADE, CREAM, CREAM_HI, FONT_TEXT, INK, SWEAT } from './palette.ts';
+import { dangerAhead, HALF_H, type DangerWorld } from './danger.ts';
 import type { SceneBlob, SceneLevel } from './scene.ts';
-import { TILE_CEIL_SPIKE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE } from './tiles.ts';
 
-/** Hitbox half height in tiles (hitbox is 1.1 × 1.2). */
-export const HALF_H = 0.6;
-
-/** True when a spike, ceiling spike or bottomless gap is within 3 tiles ahead of the direction of travel. */
-export function dangerAhead(level: SceneLevel, b: Pick<SceneBlob, 'x' | 'y' | 'vx' | 'facing'>): boolean {
-  const dir = Math.abs(b.vx) > 0.5 ? Math.sign(b.vx) : b.facing;
-  const feet = b.y + HALF_H;
-  const r0 = Math.floor(b.y - 1.8), r1 = Math.floor(feet + 0.5);
-  const c0 = Math.floor(b.x), c1 = Math.floor(b.x + dir * 3.55);
-  const step = dir > 0 ? 1 : -1;
-  for (let cx = c0; step > 0 ? cx <= c1 : cx >= c1; cx += step) {
-    if (cx < 0 || cx >= level.width) continue;
-    for (let ry = r0; ry <= r1; ry++) {
-      if (ry < 0 || ry >= level.height) continue;
-      const t = level.tileAt(cx, ry);
-      if (t === TILE_SPIKE || t === TILE_CEIL_SPIKE) return true;
-    }
-    // a gap: nothing to stand on anywhere below the feet in this column
-    let floor = false;
-    for (let ry = Math.max(0, Math.floor(feet - 0.3)); ry < level.height; ry++) {
-      const t = level.tileAt(cx, ry);
-      if (t === TILE_SOLID || t === TILE_ONEWAY) { floor = true; break; }
-    }
-    if (!floor) return true;
-  }
-  return false;
-}
+export { dangerAhead, HALF_H } from './danger.ts';
 
 const N_PARTICLES = 48;
 const TRAIL = 12;
@@ -66,7 +40,7 @@ export class BlobView {
   private tNext = 0;
   private tAcc = 0;
 
-  update(b: SceneBlob, level: SceneLevel, dt: number, timeS: number): void {
+  update(b: SceneBlob, level: SceneLevel, world: DangerWorld, dt: number, timeS: number): void {
     const feet = b.y + HALF_H;
     if (b.dead && !this.wasDead) this.deadT = timeS;
     this.wasDead = b.dead;
@@ -84,7 +58,7 @@ export class BlobView {
     this.prevGrounded = b.grounded;
     this.prevVy = b.vy;
 
-    const target = !b.dead && dangerAhead(level, b) ? 1 : 0;
+    const target = !b.dead && dangerAhead(level, b, world) ? 1 : 0;
     this.dangerLevel += (target - this.dangerLevel) * (1 - Math.exp(-dt * (target ? 14 : 4)));
     this.pullEased += (b.pull - this.pullEased) * (1 - Math.exp(-dt * 10));
     const tilt = b.dead ? 0 : Math.max(-1, Math.min(1, b.pull * 0.8 + b.vx / 30));

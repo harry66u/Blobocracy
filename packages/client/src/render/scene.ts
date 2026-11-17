@@ -1,10 +1,11 @@
 // The renderer's view model. Everything the renderer draws comes from a Scene, so it
 // stays independent of the network/physics types in @blobocracy/shared.
+import type { Entity } from '@blobocracy/shared';
 import type { Layout } from '../layout.ts';
 
 export type Sky = 'blue' | 'sunset' | 'purple';
 
-export { TILE_CEIL_SPIKE, TILE_EMPTY, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE } from './tiles.ts';
+export { TILE_CEIL_SPIKE, TILE_CONVEYOR_L, TILE_CONVEYOR_R, TILE_CRUMBLE, TILE_EMPTY, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE, TILE_SPRING } from './tiles.ts';
 
 export interface SceneZone { index: number; name: string; sky: Sky; startX: number; endX: number }
 
@@ -17,7 +18,12 @@ export interface SceneLevel {
   height: number;
   tileAt(tx: number, ty: number): number;
   zones: SceneZone[];
+  /** Moving hazards and platforms (the level's own list; positions come from entityState). */
+  entities: Entity[];
 }
+
+/** A crumble tile stood on this run, and the run time (s) it was first touched. */
+export interface SceneCrumble { tx: number; ty: number; at: number }
 
 export interface SceneDot { slot: number; dir: -1 | 0 | 1; jump: boolean }
 
@@ -61,6 +67,12 @@ export interface Scene {
   /** Current sky; the renderer cross-fades between skies over about 2 s. */
   zoneSky: Sky;
   paused: boolean;
+  /** Seconds into the current run; entity positions are entityState(e, runTime, chompStart). */
+  runTime: number;
+  /** Run time the Big Chomp was triggered, or null while it still waits. */
+  chompStart: number | null;
+  /** Crumble tiles touched this run: they shake for 0.5 s, then break apart and are gone. */
+  crumbles: SceneCrumble[];
 }
 
 export type { Layout };

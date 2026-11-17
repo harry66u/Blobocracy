@@ -187,9 +187,16 @@ describe('jumping', () => {
     expect(b.grounded).toBe(false);
   });
 
-  test('jump pressed 12 steps (200 ms) before landing is forgotten', () => {
+  // Crowds press early: a press up to a quarter second before landing still counts.
+  test('jump pressed 12 steps (200 ms) before landing still fires on landing', () => {
     const b = dropBody();
     run(b, FLAT, landingStep + 2, (i) => (i >= landingStep - 12 ? JUMP : IDLE));
+    expect(b.vy).toBeLessThan(0);
+  });
+
+  test('jump pressed 18 steps (300 ms) before landing is forgotten', () => {
+    const b = dropBody();
+    run(b, FLAT, landingStep + 2, (i) => (i >= landingStep - 18 ? JUMP : IDLE));
     expect(b.vy).toBe(0);
     expect(b.grounded).toBe(true);
   });

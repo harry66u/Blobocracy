@@ -22,7 +22,11 @@ export const PHYS = {
   halfH: 0.6,
   maxFall: 22,
   coyoteS: 0.1,
-  bufferS: 0.15,
+  bufferS: 0.25,
+  /** Launch speed off a spring: the bounce peaks about 5.5 tiles up, whatever jump is doing. */
+  springVelocity: Math.sqrt(2 * GRAVITY * 5.5),
+  /** Added to the target run speed while grounded on a conveyor (tiles/s). */
+  conveyorSpeed: 3,
 } as const;
 
 export const BLEND = {

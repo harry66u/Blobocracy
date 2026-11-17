@@ -1,7 +1,9 @@
 // Screenshots of the renderer preview harness (packages/client/preview.html) for every
-// sky plus the death and paused states, at desktop 1600x900 and phone 390x844.
-// Usage: node tools/preview-shots.mjs [--dpr=2]   Output: tools/out/preview-*.png
+// sky plus the death and paused states, and every milestone-2 mechanic (mech-*), at
+// desktop 1600x900 and phone 390x844.
+// Usage: node tools/preview-shots.mjs [--dpr=2] [--only=<name part>]   Output: tools/out/preview-*.png
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -12,7 +14,7 @@ const { chromium } = require('playwright');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'tools', 'out');
 mkdirSync(out, { recursive: true });
-const PORT = 5199;
+const PORT = await new Promise((res) => { const s = createServer(); s.listen(0, () => { const p = s.address().port; s.close(() => res(p)); }); });
 const dpr = Number((process.argv.find((a) => a.startsWith('--dpr=')) ?? '--dpr=1').slice(6));
 const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7);
 
@@ -43,6 +45,17 @@ const states = [
   { name: 'paused', q: 'sky=blue&paused=1' },
   { name: 'calm', q: 'sky=blue&still=1&strain=0' },
   { name: 'strain', q: 'sky=blue&still=1&strain=0.9' },
+  // milestone 2 mechanics (packages/client/src/preview.ts, &level=mech)
+  { name: 'mech-press', q: 'level=mech&dots=40&sky=sunset&still=1&strain=0&x=6.5&at=0.05&rt=1.63&freeze=1' },
+  { name: 'mech-press-wait', q: 'level=mech&dots=40&sky=sunset&still=1&strain=0&x=6.5&at=0.05&rt=1.2&freeze=1' },
+  { name: 'mech-mover', q: 'level=mech&dots=40&sky=sunset&still=1&strain=0&x=20.5&at=0.05&rt=1.1&freeze=1' },
+  { name: 'mech-crumble', q: 'level=mech&dots=40&sky=sunset&still=1&strain=0&x=54.5&at=0.05&crumbleDemo=1&freeze=1' },
+  { name: 'mech-spring', q: 'level=mech&dots=40&sky=sunset&still=1&strain=0&x=60.5&y=12&at=0.05&freeze=1' },
+  { name: 'mech-belt', q: 'level=mech&dots=40&sky=purple&still=1&strain=0&x=96.5&at=0.05&rt=0.4&freeze=1' },
+  { name: 'mech-saw', q: 'level=mech&dots=40&sky=purple&still=1&strain=0&x=114.5&at=0.05&rt=0.6&freeze=1' },
+  { name: 'mech-chomp', q: 'level=mech&dots=40&sky=purple&still=1&strain=0&x=141.5&chomp=2.6&at=0.05&freeze=1' },
+  { name: 'mech-chomp-near', q: 'level=mech&dots=40&sky=purple&still=1&strain=0&x=141.5&chomp=6.5&at=0.05&freeze=1' },
+  { name: 'mech-run', q: 'level=mech&dots=40&sky=sunset&x=44&at=2.2' },
 ];
 const views = [
   { name: 'desktop', viewport: { width: 1600, height: 900 }, touch: false },

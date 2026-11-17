@@ -5,7 +5,7 @@ import type { Layout } from '../layout.ts';
 import { makeCanvas } from './background.ts';
 import { CREAM, CREAM_BODY, CREAM_HI, CREAM_SHADE, HAZARD, INK } from './palette.ts';
 import type { SceneLevel } from './scene.ts';
-import { TILE_CEIL_SPIKE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE } from './tiles.ts';
+import { TILE_CEIL_SPIKE, TILE_CONVEYOR_L, TILE_CONVEYOR_R, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE } from './tiles.ts';
 
 export const CHUNK_TILES = 32;
 /** Overlap drawn on each side of a chunk so neighbours cover each other's cut edges. */
@@ -35,7 +35,7 @@ export function extendedTiles(level: SceneLevel): TileFn {
   };
 }
 
-function hash2(x: number, y: number, s: number): number {
+export function hash2(x: number, y: number, s: number): number {
   let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(s, 2246822519);
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   h ^= h >>> 16;
@@ -193,7 +193,11 @@ export function buildChunk(code: TileFn, c: number, tilePx: number): Chunk {
   const g = canvas.getContext('2d') as CanvasRenderingContext2D;
   g.setTransform(tilePx, 0, 0, tilePx, -left, -top);
 
-  const solid = (x: number, y: number) => code(x, y) === TILE_SOLID;
+  // conveyor belts set into the ground count as ground here, so it runs on unbroken under them
+  const solid = (x: number, y: number) => {
+    const t = code(x, y);
+    return t === TILE_SOLID || ((t === TILE_CONVEYOR_L || t === TILE_CONVEYOR_R) && code(x, y + 1) === TILE_SOLID);
+  };
 
   // ---- solid ground: merged rounded shapes ----
   const shape = new Path2D();

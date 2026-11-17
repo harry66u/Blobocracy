@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { parseLevel, type StateFrame } from '@blobocracy/shared';
+import {
+  createBody, createDynamics, decodeServer, encodeState, nearbyCrumbles, parseLevel, stepBody, type StateFrame,
+} from '@blobocracy/shared';
 import { predict, smooth } from '../src/predict';
 
 const rows = Array.from({ length: 18 }, (_, r) => (r === 12 ? '.@' + '.'.repeat(37) + 'G' : r >= 13 ? '#'.repeat(40) : '.'.repeat(40)));
@@ -9,7 +11,7 @@ function frame(over: Partial<StateFrame> = {}): StateFrame {
   return {
     tick: 0, run: 1, x: 5, y: 12.4, vx: 7, vy: 0, grounded: true, facing: 1, phase: 'running',
     pull: 1, pressure: 0, strain: 0, jumpHeld: false, online: 1, active: 1,
-    dots: new Uint8Array(0), dotJump: new Uint8Array(0), ...over,
+    dots: new Uint8Array(0), dotJump: new Uint8Array(0), runTime: 0, chompStart: null, crumbles: [], ...over,
   };
 }
 
@@ -66,5 +68,42 @@ describe('predict from real (float32) frames', () => {
     const f = frame({ x: 5.5, y: 13 - PHYS.halfH + 3e-7, vx: 7, pull: 1 });
     const wire = decodeServer(encodeState(f).buffer) as StateFrame;
     expect(predict(wire, LEVEL, 0.1).x).toBeGreaterThan(5.5 + 0.6);
+  });
+});
+
+describe('predict plays the frame\'s dynamics', () => {
+  // Crumble strip under x 4..7 with a pit below; a mover at row 9 further right.
+  const rows = Array.from({ length: 18 }, (_, r) => {
+    if (r === 12) return '.....@' + '.'.repeat(33) + 'G';
+    if (r === 13) return '####~~~~' + '#'.repeat(32);
+    if (r > 13) return '####....' + '#'.repeat(32);
+    if (r === 9) return '.'.repeat(20) + 'M' + '.'.repeat(19);
+    return '.'.repeat(40);
+  });
+  const L = parseLevel(3, 1, [{ name: 'dyn', sky: 'blue', rooms: [{ rows, entities: { M: { kind: 'mover', w: 3, dx: 6, dy: -2, period: 3 } } }] }]);
+  const tile = 13 * L.width + 5;
+  const still = { pull: 0, vx: 0, x: 5.5, y: 12.4, runTime: 10 };
+
+  test('a crumble the frame says has given way does not hold the blob', () => {
+    expect(predict(frame({ ...still, crumbles: [tile - 1, tile, tile + 1].map((t) => ({ tile: t, at: 9 })) }), L, 0.1).y).toBeGreaterThan(12.45);
+    expect(predict(frame({ ...still, crumbles: [tile - 1, tile, tile + 1].map((t) => ({ tile: t, at: 9.95 })) }), L, 0.1).y).toBe(12.4);
+    expect(predict(frame(still), L, 0.1).y).toBe(12.4);
+  });
+
+  test('matches the server riding a moving platform through a float32 frame', () => {
+    const b = createBody(L);
+    b.x = 21.5; b.y = 8.4; b.grounded = false;
+    const d = createDynamics();
+    for (let i = 0; i < 100; i++) stepBody(b, { move: 0, jumpHeld: false }, L, d);
+    expect(b.grounded).toBe(true);
+    const wire = decodeServer(encodeState(frame({
+      x: b.x, y: b.y, vx: b.vx, vy: b.vy, grounded: b.grounded, pull: 0,
+      runTime: d.t, chompStart: d.chompStart, crumbles: nearbyCrumbles(d, L, b.x),
+    })).buffer) as StateFrame;
+    const p = predict(wire, L, 0.1);
+    for (let i = 0; i < 6; i++) stepBody(b, { move: 0, jumpHeld: false }, L, d);
+    expect(Math.abs(p.x - b.x)).toBeLessThan(0.01);
+    expect(Math.abs(p.y - b.y)).toBeLessThan(0.01);
+    expect(p.grounded).toBe(true);
   });
 });

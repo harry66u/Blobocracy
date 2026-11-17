@@ -104,3 +104,31 @@ describe('World', () => {
     expect(w.welcome(3)).toMatchObject({ t: 'welcome', deaths: 41, run: 42, online: 3, record: { progress: 0.5, run: 12 }, zone: 0 });
   });
 });
+
+describe('World dynamics', () => {
+  // Spawn on a crumble over a pit: standing still, it gives way and the blob falls in.
+  const rows = room('#######', 2, 6).map((r, y) => (y === 13 ? '#~~~###' : y > 13 ? '#...###' : r));
+  const CRUMBLY = parseLevel(98, 1, [{ name: 'A', sky: 'blue', rooms: [rows] }]);
+  const tile = 13 * CRUMBLY.width + 2;
+
+  test('the run clock advances while running and stands still while paused', () => {
+    const w = new World(CRUMBLY);
+    for (let i = 0; i < 10; i++) w.step(STAND);
+    expect(w.dyn.t).toBeCloseTo(10 / 60, 9);
+    for (let i = 0; i < 100; i++) w.step(NOBODY);
+    expect(w.dyn.t).toBeCloseTo(10 / 60, 9);
+  });
+
+  test('a reset recreates dynamics: the crumbled tile is back next run', () => {
+    const w = new World(CRUMBLY);
+    const events = runUntil(w, STAND, (e) => e.t === 'death');
+    expect(events.find((e) => e.t === 'death')).toMatchObject({ cause: 'pit' });
+    expect(w.dyn.crumbles.has(tile)).toBe(true);
+    runUntil(w, STAND, (e) => e.t === 'reset');
+    expect(w.dyn.t).toBe(0);
+    expect(w.dyn.crumbles.size).toBe(0);
+    for (let i = 0; i < 20; i++) w.step(STAND);
+    expect(w.body.grounded).toBe(true);
+    expect(w.body.y).toBeCloseTo(CRUMBLY.spawn.y, 9);
+  });
+});

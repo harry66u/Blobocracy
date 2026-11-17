@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   encodeInput, encodePing, encodePong, decodeClient, encodeState, decodeServer,
   MSG_INPUT, MSG_PING, MSG_STATE, MSG_PONG, IN_LEFT, IN_RIGHT, IN_JUMP,
-  DOT_NONE, DOT_LEFT, DOT_RIGHT, type StateFrame,
+  DOT_NONE, DOT_LEFT, DOT_RIGHT, MAX_FRAME_CRUMBLES, type StateFrame,
 } from '../src/protocol';
 
 const bytes = (...b: number[]) => new Uint8Array(b).buffer;
@@ -60,6 +60,7 @@ describe('server messages', () => {
       grounded: true, facing: -1, phase: 'dying',
       pull: -0.6, pressure: 0.42, strain: 0.8, jumpHeld: true,
       online: 21_345, active: 18_002, dots, dotJump,
+      runTime: Math.fround(83.35), chompStart: null, crumbles: [],
     };
   }
 
@@ -77,9 +78,21 @@ describe('server messages', () => {
     return enc;
   }
 
-  test('a 128-slot state frame round-trips in at most 90 bytes', () => {
+  test('a 128-slot state frame without crumbles round-trips in at most 100 bytes', () => {
     const enc = expectRoundTrip(frame(128));
-    expect(enc.length).toBeLessThanOrEqual(90);
+    expect(enc.length).toBeLessThanOrEqual(100);
+  });
+
+  test('run time, chomp start and touched crumbles round-trip', () => {
+    const crumbles = Array.from({ length: MAX_FRAME_CRUMBLES }, (_, i) => ({ tile: 70_000 + i * 18, at: Math.fround(i * 0.4) }));
+    const enc = expectRoundTrip({ ...frame(128), chompStart: Math.fround(61.5), crumbles });
+    expect(enc.length).toBe(encodeState(frame(128)).length + 8 * MAX_FRAME_CRUMBLES);
+    expectRoundTrip({ ...frame(3), chompStart: 0, crumbles: crumbles.slice(0, 1) });
+  });
+
+  test('more than MAX_FRAME_CRUMBLES crumbles is refused', () => {
+    const crumbles = Array.from({ length: MAX_FRAME_CRUMBLES + 1 }, (_, i) => ({ tile: i, at: 0 }));
+    expect(() => encodeState({ ...frame(4), crumbles })).toThrow(/crumbles/);
   });
 
   test('a 0-slot state frame round-trips', () => {
@@ -100,6 +113,18 @@ describe('server messages', () => {
     expect(decodeServer(bytes(77, 1, 2))).toBeNull();
     expect(decodeServer(good.slice(0, good.length - 1).buffer)).toBeNull();
     expect(decodeServer(bytes(MSG_PONG, 1, 2))).toBeNull();
+    // crumble count must match the length exactly, and stay within the cap
+    const withOne = encodeState({ ...frame(8), crumbles: [{ tile: 5, at: 1 }] });
+    expect(decodeServer(withOne.slice(0, withOne.length - 1).buffer)).toBeNull();
+    const extra = new Uint8Array(withOne.length + 1);
+    extra.set(withOne);
+    expect(decodeServer(extra.buffer)).toBeNull();
+    const plain = encodeState(frame(8));
+    expect(decodeServer(plain.slice(0, plain.length - 1).buffer)).toBeNull();
+    const tooMany = new Uint8Array(plain.length + 8 * 17);
+    tooMany.set(plain);
+    tooMany[plain.length - 1] = 17;
+    expect(decodeServer(tooMany.buffer)).toBeNull();
   });
 });
 
@@ -111,6 +136,7 @@ describe('empty crowd slots', () => {
     const f = decodeServer(encodeState({
       tick: 1, run: 1, x: 0, y: 0, vx: 0, vy: 0, grounded: true, facing: 1, phase: 'running',
       pull: 0, pressure: 0, strain: 0, jumpHeld: false, online: 0, active: 0, dots, dotJump: new Uint8Array(4),
+      runTime: 0, chompStart: null, crumbles: [],
     }).buffer) as { dots: Uint8Array };
     expect([...f.dots]).toEqual([0, 1, 2, 3]);
   });

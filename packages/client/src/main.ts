@@ -19,10 +19,13 @@ const sceneLevel: SceneLevel = {
   height: level.height,
   tileAt: (tx, ty) => tileAt(level, tx, ty),
   zones: level.zones,
+  entities: level.entities,
 };
 
 const TICK_FLASH_S = 1.2;
-const CAUSE_NAMES: Record<string, string> = { spikes: 'Spikes', 'ceiling spikes': 'Ceiling Spikes', pit: 'Pit' };
+const CAUSE_NAMES: Record<string, string> = {
+  spikes: 'Spikes', 'ceiling spikes': 'Ceiling Spikes', pit: 'Pit', press: 'Big Press', saw: 'Saw', chomp: 'Big Chomp',
+};
 
 const hud = { deaths: 0, record: null as { progress: number; run: number } | null, tickedAt: -Infinity };
 let deathCard: Scene['deathCard'] = null;
@@ -94,10 +97,13 @@ function frame(): void {
   const L = view.layout;
 
   let blob: Scene['blob'];
+  let runTime = 0;
   let online = net.state.welcome && net.state.welcome.t === 'welcome' ? net.state.welcome.online : 0;
   if (f) {
     const ahead = (performance.now() - net.state.latestAt) / 1000 + net.state.rttMs / 2000;
     const body = predict(f, level, ahead);
+    // Hazards keep moving between frames while the run is running.
+    runTime = f.phase === 'running' ? f.runTime + Math.max(0, ahead) : f.runTime;
     pos = pos ? smooth(pos, body, dt) : { x: body.x, y: body.y };
     blob = { x: pos.x, y: pos.y, vx: body.vx, vy: body.vy, grounded: body.grounded, facing: body.facing, pull: f.pull, strain: f.strain, dead: f.phase === 'dying' };
     online = f.online;
@@ -124,6 +130,9 @@ function frame(): void {
     deathCard,
     zoneSky: zoneAt(level, blob.x).sky,
     paused: f?.phase === 'paused',
+    runTime,
+    chompStart: f?.chompStart ?? null,
+    crumbles: f ? f.crumbles.map((c) => ({ tx: c.tile % level.width, ty: Math.floor(c.tile / level.width), at: c.at })) : [],
   };
 
   // While the death card is up inputs don't count; fade the touch buttons so a pit death stays visible.

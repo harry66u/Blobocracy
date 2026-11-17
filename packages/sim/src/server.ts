@@ -1,4 +1,6 @@
-import { DT, FRAME_EVERY, LEVEL1, encodeState, type Level } from '@blobocracy/shared';
+import {
+  DT, FRAME_CRUMBLE_RANGE, FRAME_EVERY, LEVEL1, MAX_FRAME_CRUMBLES, encodeState, nearbyCrumbles, type Level,
+} from '@blobocracy/shared';
 import { Voters } from './crowd';
 import { startLocalRelay } from './relay';
 import { VirtualCrowd } from './virtual';
@@ -27,12 +29,14 @@ export async function startServer(opts: { port: number; virtualPlayers: number; 
       for (const e of world.step(counts)) relay.broadcastEvent(e);
       if (world.tick % FRAME_EVERY === 0) {
         const { dots, dotJump } = voters.sample();
-        const b = world.body, k = world.lastBlend;
+        const b = world.body, k = world.lastBlend, dyn = world.dyn;
         relay.broadcast(encodeState({
           tick: world.tick, run: world.run, x: b.x, y: b.y, vx: b.vx, vy: b.vy,
           grounded: b.grounded, facing: b.facing, phase: world.phase,
           pull: k.pull, pressure: k.pressure, strain: k.strain, jumpHeld: k.jumpHeld,
           online: voters.size(), active: counts.active, dots, dotJump,
+          runTime: dyn.t, chompStart: dyn.chompStart,
+          crumbles: nearbyCrumbles(dyn, world.level, b.x, FRAME_CRUMBLE_RANGE, MAX_FRAME_CRUMBLES),
         }));
       }
     }

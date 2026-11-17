@@ -1,4 +1,7 @@
-import { PHYS, T_EMPTY, T_SOLID, T_SPIKE_UP, tileAt, type Level } from '@blobocracy/shared';
+import {
+  PHYS, T_CONVEYOR_L, T_CONVEYOR_R, T_CRUMBLE, T_EMPTY, T_SOLID, T_SPIKE_UP, T_SPRING,
+  crumbleGone, entityState, tileAt, type Dynamics, type Level,
+} from '@blobocracy/shared';
 import type { Voters } from './crowd';
 import type { World } from './world';
 
@@ -20,15 +23,45 @@ function rng(seed: number): () => number {
   };
 }
 
-/** True when a gap, floor spike or step up is within `range` tiles ahead of the blob's feet. */
-export function hazardAhead(level: Level, x: number, y: number, dir: number, range = 3): boolean {
+/** How high above its feet the crowd watches for a saw or crusher (about a full jump). */
+const LOOK_UP = 4;
+
+/** The tile as the blob would meet it: a crumble that has given way is empty. */
+function tileNow(level: Level, tx: number, ty: number, dyn?: Dynamics): number {
+  const t = tileAt(level, tx, ty);
+  return t === T_CRUMBLE && dyn && crumbleGone(dyn, ty * level.width + tx) ? T_EMPTY : t;
+}
+const isBlock = (t: number) => t === T_SOLID || t === T_CRUMBLE || t === T_SPRING || t === T_CONVEYOR_R || t === T_CONVEYOR_L;
+
+/**
+ * True when a gap, floor spike or step up is within `range` tiles ahead of the blob's feet,
+ * or (given the run's `dyn`) a saw, or a crusher that is slamming or holding down.
+ * Crumble, spring and conveyor tiles are floor like any other.
+ */
+export function hazardAhead(level: Level, x: number, y: number, dir: number, range = 3, dyn?: Dynamics): boolean {
   if (dir === 0) return false;
   const footRow = Math.floor(y + PHYS.halfH + 0.05);
   for (let d = 1; d <= range; d++) {
     const col = Math.floor(x + dir * d);
-    const above = tileAt(level, col, footRow - 1);
-    if (above === T_SPIKE_UP || above === T_SOLID) return true;
-    if (tileAt(level, col, footRow) === T_EMPTY && tileAt(level, col, footRow + 1) === T_EMPTY) return true;
+    const above = tileNow(level, col, footRow - 1, dyn);
+    if (above === T_SPIKE_UP || isBlock(above)) return true;
+    if (tileNow(level, col, footRow, dyn) === T_EMPTY && tileNow(level, col, footRow + 1, dyn) === T_EMPTY) return true;
+  }
+  return dyn !== undefined && entityAhead(level, x, y, dir, range, dyn);
+}
+
+/** A saw near the blob's jump height, or a crusher slamming or holding down, over the stretch it is heading into. */
+function entityAhead(level: Level, x: number, y: number, dir: number, range: number, dyn: Dynamics): boolean {
+  const lo = Math.min(x, x + dir * range), hi = Math.max(x, x + dir * range);
+  const top = y - LOOK_UP, bottom = y + PHYS.halfH;
+  for (const e of level.entities) {
+    const s = entityState(e, dyn.t, dyn.chompStart);
+    if (s.kind === 'saw') {
+      if (s.x + s.r > lo && s.x - s.r < hi && s.y + s.r > top && s.y - s.r < bottom) return true;
+    } else if (s.kind === 'crusher' && (s.moving === 'down' || s.moving === 'hold')) {
+      // Its column is deadly from the moment it starts to fall, however high it still is.
+      if (s.x + s.w > lo && s.x < hi && s.y < bottom) return true;
+    }
   }
   return false;
 }
@@ -61,7 +94,7 @@ export class VirtualCrowd {
     const dir = Math.sign(b.vx) || b.facing;
     // Look further ahead when moving fast: people react to what is coming, not what is here.
     const range = 1.2 + Math.abs(b.vx) * 0.35;
-    const danger = world.phase === 'running' && hazardAhead(world.level, b.x, b.y, dir, range);
+    const danger = world.phase === 'running' && hazardAhead(world.level, b.x, b.y, dir, range, world.dyn);
     // People react once per obstacle: when it comes into view, or when the blob lands with it still ahead.
     const cue = danger && (!this.prevDanger || (b.grounded && !this.prevGrounded));
     this.prevDanger = danger;

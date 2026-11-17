@@ -44,7 +44,12 @@ describe('server', () => {
     const f = await waitFor(() => c.frames.find((x) => x.active === 1), 500);
     expect(f.pull).toBeGreaterThan(0.9);
     const x0 = f.x;
-    await waitFor(() => c.frames.some((x) => x.x > x0 + 1));
+    const moved = await waitFor(() => c.frames.find((x) => x.x > x0 + 1));
+    // Frames carry the world's run clock (float32) so clients can time hazards.
+    expect(moved.runTime).toBeGreaterThan(f.runTime);
+    expect(moved.runTime).toBeCloseTo(Math.fround(srv!.world.dyn.t), 0);
+    expect(moved.chompStart).toBeNull();
+    expect(moved.crumbles).toEqual([]);
     c.ws.close();
   });
 
