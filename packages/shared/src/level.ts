@@ -1,12 +1,25 @@
 import { LEVEL_HEIGHT, PHYS } from './constants';
+import { makeEntity, type Entity, type EntitySpec } from './entities';
 
 /** Tile codes stored in `Level.tiles`. */
 export const T_EMPTY = 0, T_SOLID = 1, T_ONEWAY = 2, T_SPIKE_UP = 3, T_SPIKE_DOWN = 4;
+/** Solid until stood on, then gives way (see physics). */
+export const T_CRUMBLE = 5;
+/** Solid; standing on it launches the blob high. */
+export const T_SPRING = 6;
+/** Solid; standing on it pushes the blob right (R) or left (L). */
+export const T_CONVEYOR_R = 7, T_CONVEYOR_L = 8;
 
 export type Sky = 'blue' | 'sunset' | 'purple';
 
-/** Authoring form of a zone: rooms are concatenated left to right; each room is 18 equal-length rows. */
-export interface ZoneDef { name: string; sky: Sky; rooms: string[][] }
+/**
+ * Authoring form of a room: 18 equal-length rows, plus specs for any entity marker
+ * letters in it (A–Z except G). A plain string[] is a room without entities.
+ */
+export interface RoomDef { rows: string[]; entities?: Record<string, EntitySpec> }
+
+/** Authoring form of a zone: rooms are concatenated left to right. */
+export interface ZoneDef { name: string; sky: Sky; rooms: (string[] | RoomDef)[] }
 
 /** A parsed zone, spanning columns `startX` (inclusive) to `endX` (exclusive). */
 export interface Zone { index: number; name: string; sky: Sky; startX: number; endX: number }
@@ -21,19 +34,24 @@ export interface Level {
   zones: Zone[];
   spawn: { x: number; y: number };
   goalX: number;
+  /** Moving hazards and platforms, in authoring order; `id` is the index. */
+  entities: Entity[];
 }
 
 const CHAR_TILE: Record<string, number> = {
   '#': T_SOLID, '=': T_ONEWAY, '^': T_SPIKE_UP, 'v': T_SPIKE_DOWN,
   '.': T_EMPTY, ' ': T_EMPTY, '@': T_EMPTY, 'G': T_EMPTY,
+  '~': T_CRUMBLE, '*': T_SPRING, '>': T_CONVEYOR_R, '<': T_CONVEYOR_L,
 };
+const isMarker = (ch: string) => ch >= 'A' && ch <= 'Z' && ch !== 'G';
+const rowsOf = (room: string[] | RoomDef): string[] => (Array.isArray(room) ? room : room.rows);
 
 /**
  * Parses ASCII zones into a level. Throws on malformed rooms, unknown characters,
  * or anything but exactly one `@` (in the first room) and one `G` (in the last room).
  */
 export function parseLevel(id: number, version: number, zones: ZoneDef[]): Level {
-  const rooms = zones.flatMap((z) => z.rooms);
+  const rooms = zones.flatMap((z) => z.rooms.map(rowsOf));
   if (rooms.length === 0) throw new Error('level has no rooms');
 
   rooms.forEach((room, r) => {
@@ -51,15 +69,24 @@ export function parseLevel(id: number, version: number, zones: ZoneDef[]): Level
   const parsedZones: Zone[] = [];
   const spawns: { x: number; y: number; room: number }[] = [];
   const goals: { x: number; room: number }[] = [];
+  const entities: Entity[] = [];
 
   let roomIndex = 0;
   let x0 = 0;
   zones.forEach((zone, index) => {
     const startX = x0;
-    for (const room of zone.rooms) {
+    for (const roomDef of zone.rooms) {
+      const room = rowsOf(roomDef);
+      const specs = Array.isArray(roomDef) ? {} : roomDef.entities ?? {};
       room.forEach((row, ty) => {
         for (let cx = 0; cx < row.length; cx++) {
           const ch = row[cx]!;
+          if (isMarker(ch)) {
+            const spec = specs[ch];
+            if (!spec) throw new Error(`room ${roomIndex} row ${ty} col ${cx}: marker '${ch}' has no entity spec`);
+            entities.push(makeEntity(spec, -1, x0 + cx, ty));
+            continue; // markers leave an empty tile
+          }
           const tile = CHAR_TILE[ch];
           if (tile === undefined) throw new Error(`room ${roomIndex} row ${ty} col ${cx}: unknown tile '${ch}'`);
           const tx = x0 + cx;
@@ -74,6 +101,10 @@ export function parseLevel(id: number, version: number, zones: ZoneDef[]): Level
     parsedZones.push({ index, name: zone.name, sky: zone.sky, startX, endX: x0 });
   });
 
+  // Ids follow reading order through the level: left to right, then top to bottom.
+  entities.sort((a, b) => a.x - b.x || ('y' in a && 'y' in b ? a.y - b.y : 0));
+  entities.forEach((e, i) => { e.id = i; });
+
   if (spawns.length !== 1) throw new Error(`level needs exactly one '@', found ${spawns.length}`);
   if (goals.length !== 1) throw new Error(`level needs exactly one 'G', found ${goals.length}`);
   const spawn = spawns[0]!;
@@ -83,7 +114,7 @@ export function parseLevel(id: number, version: number, zones: ZoneDef[]): Level
 
   return {
     id, version, width, height: LEVEL_HEIGHT, tiles, zones: parsedZones,
-    spawn: { x: spawn.x, y: spawn.y }, goalX: goal.x,
+    spawn: { x: spawn.x, y: spawn.y }, goalX: goal.x, entities,
   };
 }
 
