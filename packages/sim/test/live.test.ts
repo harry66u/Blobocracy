@@ -141,3 +141,24 @@ describe('crash recovery (spec §10)', () => {
     expect(srv.world.run).toBe(11);
   });
 });
+
+describe('a restart while a clip was being made (M6)', () => {
+  test('the announced clip is marked lost: its link says so instead of 404 forever', async () => {
+    const live = new MemoryLiveStore();
+    const store = new MemoryStore();
+    const w = new World(LEVEL1, { deaths: 3, record: null });
+    const snap: LiveSnapshot = {
+      v: 1, levelId: 1, version: LEVEL1.version, world: { ...w.snapshot(), phase: 'dying', run: 4, deaths: 4, maxProgress: 0.3 },
+      recordVersion: 1, runStartedAt: 5, runPeak: 2, runMaxX: 4, peakPlayers: 9, bans: [], savedAt: 1,
+      pendingClip: { id: 'Lost_1', kind: 'record', run: 4, progress: 0.3, cause: 'pit', deaths: 4 },
+    };
+    await live.save(snap);
+    srv = await startServer({ port: null, virtualPlayers: 0, store, live, log: quiet });
+    await srv.store.drained();
+    const r = await srv.api('/api/clips/Lost_1', '');
+    expect(r.status).toBe(410);
+    expect(JSON.parse(String(r.body))).toMatchObject({ lost: true });
+    expect((await srv.api('/api/clips/Lost_1/meta', '')).status).toBe(410);
+    expect((await srv.api('/api/clips/Nope_1', '')).status).toBe(404);
+  });
+});

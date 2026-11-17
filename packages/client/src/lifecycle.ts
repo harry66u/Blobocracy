@@ -14,3 +14,19 @@ export function releaseWhenHidden(win: EventTarget, doc: EventTarget & { hidden:
     doc.removeEventListener('visibilitychange', onVis);
   };
 }
+
+/**
+ * Closes the game connection after the page has been hidden for `afterMs` (default a minute) and
+ * reopens it when the page is visible again (review I1): a forgotten background tab would
+ * otherwise receive every frame forever, which costs egress and a seat on a relay.
+ */
+export function suspendWhenHidden(doc: EventTarget & { hidden: boolean }, net: { suspend(): void; resume(): void }, afterMs = 60_000): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const onVis = () => {
+    clearTimeout(timer);
+    if (doc.hidden) timer = setTimeout(() => net.suspend(), afterMs);
+    else net.resume();
+  };
+  doc.addEventListener('visibilitychange', onVis);
+  return () => { clearTimeout(timer); doc.removeEventListener('visibilitychange', onVis); };
+}

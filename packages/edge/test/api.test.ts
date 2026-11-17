@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { ApiProxy, absolutizeMeta, clipPreview, maxAge, originOf, simHttpBase, withPreview } from '../src/api';
+import { ApiProxy, TokenBuckets, absolutizeMeta, canonicalApi, clipPreview, maxAge, originOf, simHttpBase, withPreview } from '../src/api';
 
 describe('API proxy', () => {
   test('sim URL → its internal HTTP', () => {
@@ -81,5 +81,74 @@ describe('link previews', () => {
     expect(out).toContain('<meta property="og:image" content="https://b.com/api/clips/abc/og.png">');
     expect(out).toContain('<meta property="og:type" content="video.other">');
     expect(clipPreview({ id: 'abc', run: 1, progress: 0.2, kind: 'record', hasOg: false, title: 't', description: 'd' }, 'https://b.com').image).toBe('https://b.com/og.png');
+  });
+});
+
+describe('read API hardening (C1, M1)', () => {
+  const TRACKS = new Set([1, 2, 1002]);
+  test('only known routes and parameters reach the sim, normalized into one cache key', () => {
+    expect(canonicalApi('/api/summary', 'x=123', TRACKS)).toBe('/api/summary');
+    expect(canonicalApi('/api/summary', 'level=2&x=1', TRACKS)).toBe('/api/summary?level=2');
+    expect(canonicalApi('/api/summary', 'level=999', TRACKS)).toBe('/api/summary'); // unknown level: the current one, like the sim
+    expect(canonicalApi('/api/summary/', '', TRACKS)).toBe('/api/summary');
+    expect(canonicalApi('/api/runs', 'zzz=1&best=true&page=2&level=1', TRACKS)).toBe('/api/runs?page=2&best=1&level=1');
+    expect(canonicalApi('/api/runs', 'page=1&size=25&best=0', TRACKS)).toBe('/api/runs');
+    expect(canonicalApi('/api/runs', 'page=99999999&size=500', TRACKS)).toBe('/api/runs?page=100000&size=100');
+    expect(canonicalApi('/api/runs', 'page=abc', TRACKS)).toBe('/api/runs');
+    expect(canonicalApi('/api/levels', 'a=1', TRACKS)).toBe('/api/levels');
+    expect(canonicalApi('/api/hall', 'cb=7', TRACKS)).toBe('/api/hall');
+    expect(canonicalApi('/api/clips/Qx7_ab', 'v=1', TRACKS)).toBe('/api/clips/Qx7_ab');
+    expect(canonicalApi('/api/clips/Qx7_ab/meta', '', TRACKS)).toBe('/api/clips/Qx7_ab/meta');
+    expect(canonicalApi('/api/clips/Qx7_ab/og.png', '', TRACKS)).toBe('/api/clips/Qx7_ab/og.png');
+    expect(canonicalApi('/api/clips/bad!id', '', TRACKS)).toBeNull();
+    expect(canonicalApi('/api/nope', '', TRACKS)).toBeNull();
+    // path tricks never reach the sim's other routes (M1)
+    expect(canonicalApi('/api/../healthz', '', TRACKS)).toBeNull();
+    expect(canonicalApi('/api/%2e%2e/admin/stats', '', TRACKS)).toBeNull();
+    expect(canonicalApi('/api/clips/../../admin/stats', '', TRACKS)).toBeNull();
+  });
+
+  test('the proxy itself refuses anything that normalizes outside /api/ (M1)', async () => {
+    let calls = 0;
+    const fake = (async () => { calls++; return new Response('x'); }) as unknown as typeof fetch;
+    const p = new ApiProxy('http://sim', { fetch: fake });
+    expect((await p.get('/api/../healthz')).status).toBe(404);
+    expect((await p.get('/api/%2E%2E/admin/stats')).status).toBe(404);
+    expect(calls).toBe(0);
+  });
+
+  test('beyond the in-flight cap a miss gets the stale copy, or a 503 when there is none', async () => {
+    let now = 0;
+    const release: (() => void)[] = [];
+    const fake = (async (url: string) => {
+      await new Promise<void>((r) => release.push(r));
+      return new Response(`v:${url}`, { headers: { 'cache-control': 'public, max-age=5' } });
+    }) as unknown as typeof fetch;
+    const p = new ApiProxy('http://sim', { fetch: fake, now: () => now, maxInflight: 2 });
+    const warm = p.get('/api/runs?page=3');
+    release.shift()!();
+    await warm;
+    now += 10_000; // stale now
+    const a = p.get('/api/runs?page=1'), b = p.get('/api/runs?page=2');
+    expect((await p.get('/api/runs?page=4')).status).toBe(503);
+    const stale = await p.get('/api/runs?page=3');
+    expect(stale.status).toBe(200);
+    expect(stale.body.toString()).toBe('v:http://sim/api/runs?page=3');
+    expect(p.stats().shed).toBe(2);
+    for (const r of release.splice(0)) r();
+    await Promise.all([a, b]);
+  });
+
+  test('token buckets: a burst, then a steady rate per key', () => {
+    let now = 0;
+    const t = new TokenBuckets({ perSecond: 2, burst: 3, now: () => now });
+    expect([t.take('a'), t.take('a'), t.take('a'), t.take('a')]).toEqual([true, true, true, false]);
+    expect(t.take('b')).toBe(true);
+    now += 500;
+    expect(t.take('a')).toBe(true);
+    expect(t.take('a')).toBe(false);
+    now += 3_600_000;
+    t.prune();
+    expect(t.size()).toBe(0);
   });
 });

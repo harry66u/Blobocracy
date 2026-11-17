@@ -1,11 +1,14 @@
 import { ACTIVE_WINDOW_S, BLEND, IN_JUMP, IN_LEFT, IN_RIGHT, type RelaySummary, type SampleEntry } from '@blobocracy/shared';
-import { ipKey } from './ip';
+import { capKeys, ipKey } from './ip';
 import { IdenticalStreams, RateLimiter, TimingMonitor } from './limits';
 
 export type FlagReason = 'rate' | 'regular' | 'identical';
 
 export interface CrowdOptions {
-  /** All connections from one IP together weigh at most this many votes (§8, default 4). */
+  /**
+   * All connections from one IP together weigh at most this many votes (§8, default 4). For IPv6
+   * this is per /64, with twice as many per /56 and four times as many per /48, all applied.
+   */
   ipVoteCap: number;
   /** Input changes per second per connection (§8, default 20). */
   rateLimit: number;
@@ -22,6 +25,8 @@ interface Player {
   id: number;
   ip: string;
   ipk: string;
+  /** The nested caps this player counts against ([key, cap]; the first is ipk). */
+  caps: [string, number][];
   sid: string | undefined;
   watcher: boolean;
   bits: number;
@@ -55,6 +60,7 @@ export class EdgeCrowd {
   private waiting = new Set<number>();
   private lastRotate = -Infinity;
   private flagsBySid = new Map<string, { reason: FlagReason; at: number }>();
+  private lastFlagPrune = -Infinity;
   private identical: IdenticalStreams;
   private ipActive = new Map<string, number>();
   private oldestInput = 0;
@@ -68,7 +74,7 @@ export class EdgeCrowd {
 
   add(id: number, ip: string, sid?: string, watcher = false): void {
     const p: Player = {
-      id, ip, ipk: ipKey(ip), sid, watcher, bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false,
+      id, ip, ipk: ipKey(ip), caps: capKeys(ip, this.o.ipVoteCap), sid, watcher, bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false,
       pending: -1, rate: new RateLimiter(this.o.rateLimit), timing: new TimingMonitor(), flag: null, sampleId: -1,
     };
     const remembered = sid ? this.flagsBySid.get(sid) : undefined;
@@ -124,11 +130,25 @@ export class EdgeCrowd {
     p.flag = reason;
     this.counters.flagged[reason]++;
     if (p.sid) {
-      this.flagsBySid.set(p.sid, { reason, at: Date.now() });
+      const now = Date.now();
+      this.pruneFlags(now);
+      this.flagsBySid.set(p.sid, { reason, at: now });
       if (!remote) this.o.onFlag?.(p.sid, reason);
     }
     this.unsample(p);
     this.waiting.delete(id);
+  }
+
+  /** Forgets remembered flags older than FLAG_MEMORY_MS (at most once a minute; they no longer apply anyway). */
+  private pruneFlags(now: number): void {
+    if (now - this.lastFlagPrune < 60_000) return;
+    this.lastFlagPrune = now;
+    for (const [sid, f] of this.flagsBySid) if (now - f.at >= FLAG_MEMORY_MS) this.flagsBySid.delete(sid);
+  }
+
+  /** Session ids whose flag is remembered (stats, tests). */
+  flagMemory(): number {
+    return this.flagsBySid.size;
   }
 
   isFlagged(id: number): boolean {
@@ -156,19 +176,24 @@ export class EdgeCrowd {
     const ipActive = this.ipActive;
     ipActive.clear();
     const buckets = [0, 0, 0, 0, 0, 0, 0, 0];
-    let watchers = 0;
+    let watchers = 0, capped = 0;
     for (const p of this.players.values()) {
       if (p.watcher) watchers++;
       if (p.pending >= 0 && p.rate.allow(nowMs)) { this.apply(p, p.pending, nowMs); p.pending = -1; }
       if (!this.isActive(p, nowMs)) continue;
       buckets[p.bits]!++;
-      if (!p.flag) ipActive.set(p.ipk, (ipActive.get(p.ipk) ?? 0) + 1);
+      if (p.flag) continue;
+      for (const [k, cap] of p.caps) {
+        const n = (ipActive.get(k) ?? 0) + 1;
+        ipActive.set(k, n);
+        if (n === cap + 1) capped++; // this IP (or prefix) just went over its cap
+      }
     }
-    let left = 0, right = 0, jump = 0, active = 0, fresh = 0, capped = 0;
-    for (const n of ipActive.values()) if (n > this.o.ipVoteCap) capped++;
+    let left = 0, right = 0, jump = 0, active = 0, fresh = 0;
     for (const p of this.players.values()) {
       if (p.flag || !this.isActive(p, nowMs)) continue;
-      const w = Math.min(1, this.o.ipVoteCap / ipActive.get(p.ipk)!);
+      let w = 1;
+      for (const [k, cap] of p.caps) w = Math.min(w, cap / ipActive.get(k)!);
       active += w;
       const l = p.bits & IN_LEFT, r = p.bits & IN_RIGHT;
       if (l && !r) left += w;

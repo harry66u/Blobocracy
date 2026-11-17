@@ -25,12 +25,21 @@ const point = (r: Row): SeriesPoint => [Number(r.run), Number(r.p), ms(r.at as D
 /** Postgres via `postgres` (porsager). `DATABASE_URL`; migrations in packages/sim/migrations, applied on init. */
 export class PostgresStore implements Store {
   readonly sql: postgres.Sql;
+  /**
+   * A separate small pool for the public read API (history pages, clips), so page views can never
+   * take the connections that runs, clips and the world row are written on (review C1).
+   */
+  readonly read: postgres.Sql;
 
-  constructor(url: string, opts: { max?: number; connectTimeoutS?: number; migrationsDir?: string } = {}) {
+  constructor(url: string, opts: { max?: number; readMax?: number; connectTimeoutS?: number; migrationsDir?: string } = {}) {
     this.sql = postgres(url, {
       max: opts.max ?? 4, idle_timeout: 30, connect_timeout: opts.connectTimeoutS ?? 5, onnotice: () => {},
       // one statement should never hang the write queue for long
       connection: { statement_timeout: 15_000, application_name: 'blobocracy-sim' },
+    });
+    this.read = postgres(url, {
+      max: opts.readMax ?? 2, idle_timeout: 30, connect_timeout: opts.connectTimeoutS ?? 5, onnotice: () => {},
+      connection: { statement_timeout: 10_000, application_name: 'blobocracy-sim-read' },
     });
     this.migrationsDir = opts.migrationsDir ?? MIGRATIONS_DIR;
   }
@@ -51,7 +60,7 @@ export class PostgresStore implements Store {
     });
   }
 
-  async close(): Promise<void> { await this.sql.end({ timeout: 5 }); }
+  async close(): Promise<void> { await Promise.all([this.sql.end({ timeout: 5 }), this.read.end({ timeout: 5 })]); }
 
   async ensureLevel(l: LevelInfo): Promise<void> {
     await this.sql.begin(async (tx) => {
@@ -80,15 +89,22 @@ export class PostgresStore implements Store {
     if (!r) return null;
     const record = r.record_progress === null ? null
       : { progress: Number(r.record_progress), run: Number(r.record_run), version: Number(r.record_version ?? 1) };
-    return { levelId, deaths: Number(r.deaths), record, peakPlayers: Number(r.peak_players) };
+    const row: WorldRow = { levelId, deaths: Number(r.deaths), record, peakPlayers: Number(r.peak_players) };
+    if (r.next_run !== null && r.next_run !== undefined) row.nextRun = Number(r.next_run);
+    return row;
   }
 
   async saveWorld(w: WorldRow): Promise<void> {
-    await this.sql`INSERT INTO world (level_id, deaths, record_progress, record_run, record_version, peak_players, updated_at)
-      VALUES (${w.levelId}, ${w.deaths}, ${w.record?.progress ?? null}, ${w.record?.run ?? null}, ${w.record?.version ?? null}, ${w.peakPlayers}, now())
+    // The record is only replaced by a better one: a sim that booted without the database (counters
+    // from zero) must never clobber the all-time record when its queued row lands.
+    await this.sql`INSERT INTO world (level_id, deaths, record_progress, record_run, record_version, peak_players, next_run, updated_at)
+      VALUES (${w.levelId}, ${w.deaths}, ${w.record?.progress ?? null}, ${w.record?.run ?? null}, ${w.record?.version ?? null}, ${w.peakPlayers}, ${w.nextRun ?? null}, now())
       ON CONFLICT (level_id) DO UPDATE SET deaths = GREATEST(world.deaths, EXCLUDED.deaths),
-        record_progress = EXCLUDED.record_progress, record_run = EXCLUDED.record_run, record_version = EXCLUDED.record_version,
-        peak_players = GREATEST(world.peak_players, EXCLUDED.peak_players), updated_at = now()`;
+        record_progress = CASE WHEN world.record_progress IS NULL OR EXCLUDED.record_progress > world.record_progress THEN EXCLUDED.record_progress ELSE world.record_progress END,
+        record_run = CASE WHEN world.record_progress IS NULL OR EXCLUDED.record_progress > world.record_progress THEN EXCLUDED.record_run ELSE world.record_run END,
+        record_version = CASE WHEN world.record_progress IS NULL OR EXCLUDED.record_progress > world.record_progress THEN EXCLUDED.record_version ELSE world.record_version END,
+        peak_players = GREATEST(world.peak_players, EXCLUDED.peak_players),
+        next_run = GREATEST(world.next_run, EXCLUDED.next_run), updated_at = now()`;
   }
 
   async recordRun(r: RunRow): Promise<void> {
@@ -110,7 +126,7 @@ export class PostgresStore implements Store {
   }
 
   async getClip(id: string): Promise<ClipRow | null> {
-    const [r] = await this.sql`SELECT * FROM clips WHERE id = ${id}`;
+    const [r] = await this.read`SELECT * FROM clips WHERE id = ${id}`;
     if (!r) return null;
     return {
       id: String(r.id), levelId: Number(r.level_id), levelVersion: Number(r.level_version), run: Number(r.run_number), kind: r.kind as ReplayKind,
@@ -123,25 +139,25 @@ export class PostgresStore implements Store {
     const off = (q.page - 1) * q.pageSize;
     const [rows, [count]] = await Promise.all([
       q.best
-        ? this.sql`SELECT * FROM runs WHERE level_id = ${q.levelId} ORDER BY max_progress DESC, run_number DESC LIMIT ${q.pageSize} OFFSET ${off}`
-        : this.sql`SELECT * FROM runs WHERE level_id = ${q.levelId} ORDER BY run_number DESC LIMIT ${q.pageSize} OFFSET ${off}`,
-      this.sql`SELECT count(*)::int AS n FROM runs WHERE level_id = ${q.levelId}`,
+        ? this.read`SELECT * FROM runs WHERE level_id = ${q.levelId} ORDER BY max_progress DESC, run_number DESC LIMIT ${q.pageSize} OFFSET ${off}`
+        : this.read`SELECT * FROM runs WHERE level_id = ${q.levelId} ORDER BY run_number DESC LIMIT ${q.pageSize} OFFSET ${off}`,
+      this.read`SELECT count(*)::int AS n FROM runs WHERE level_id = ${q.levelId}`,
     ]);
     const total = Number(count?.n ?? 0);
     return { runs: rows.map(runOf), page: q.page, pageSize: q.pageSize, total, pages: Math.max(1, Math.ceil(total / q.pageSize)) };
   }
 
   async summary(levelId: number, maxPoints: number, zones: number): Promise<Summary> {
-    const [agg] = await this.sql`SELECT count(*)::int AS n, min(started_at) AS first, max(ended_at) AS last FROM runs WHERE level_id = ${levelId}`;
+    const [agg] = await this.read`SELECT count(*)::int AS n, min(started_at) AS first, max(ended_at) AS last FROM runs WHERE level_id = ${levelId}`;
     const n = Number(agg?.n ?? 0);
     const bucket = bucketSize(n, maxPoints);
     const [reach, series, records] = await Promise.all([
-      this.sql`SELECT zone_reached AS z, count(*)::int AS n FROM runs WHERE level_id = ${levelId} GROUP BY zone_reached`,
+      this.read`SELECT zone_reached AS z, count(*)::int AS n FROM runs WHERE level_id = ${levelId} GROUP BY zone_reached`,
       // each bucket's best run (ties: the earlier run) and the bucket's last end time
-      this.sql`SELECT DISTINCT ON (b) run_number AS run, max_progress AS p, max(ended_at) OVER (PARTITION BY b) AS at
+      this.read`SELECT DISTINCT ON (b) run_number AS run, max_progress AS p, max(ended_at) OVER (PARTITION BY b) AS at
         FROM (SELECT *, (run_number - 1) / ${bucket}::int AS b FROM runs WHERE level_id = ${levelId}) t
         ORDER BY b, max_progress DESC, run_number ASC`,
-      this.sql`SELECT run_number AS run, max_progress AS p, ended_at AS at FROM (
+      this.read`SELECT run_number AS run, max_progress AS p, ended_at AS at FROM (
           SELECT run_number, max_progress, ended_at,
             max(max_progress) OVER (ORDER BY run_number ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS before
           FROM runs WHERE level_id = ${levelId}) t
@@ -156,7 +172,7 @@ export class PostgresStore implements Store {
   }
 
   async hallOfFame(): Promise<HallEntry[]> {
-    const rows = await this.sql`SELECT h.*, l.name FROM hall_of_fame h LEFT JOIN levels l ON l.id = h.level_id ORDER BY h.level_id`;
+    const rows = await this.read`SELECT h.*, l.name FROM hall_of_fame h LEFT JOIN levels l ON l.id = h.level_id ORDER BY h.level_id`;
     return rows.map((r) => ({
       levelId: Number(r.level_id), levelName: String(r.name ?? `Level ${r.level_id}`), beatenAt: ms(r.beaten_at)!, deathCount: Number(r.death_count),
       peakPlayers: Number(r.peak_players), run: Number(r.run_number), clipId: (r.clip_id as string | null) ?? null,

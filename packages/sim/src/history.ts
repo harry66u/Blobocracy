@@ -3,7 +3,7 @@ import {
   CELEBRATE_S, TICK_HZ, ReplayRecorder, packReplay, progressOf, trackId, zoneAt,
   type Level, type ReplayKind, type ServerEvent,
 } from '@blobocracy/shared';
-import type { LiveSnapshot } from './live';
+import type { LiveSnapshot, PendingClipRef } from './live';
 import { renderClipOg, type OgCard } from './og';
 import type { ClipRow, RecordMark, RunRow, Store } from './store';
 import type { World } from './world';
@@ -140,7 +140,7 @@ export class History {
           peakPlayers: this.runPeak, clipId: null,
         };
         void this.store.recordRun(row);
-        void this.store.saveWorld({ levelId: this.track, deaths: e.deaths, record: this.recordMark(world), peakPlayers: this.peakPlayers });
+        void this.store.saveWorld({ levelId: this.track, deaths: e.deaths, record: this.recordMark(world), peakPlayers: this.peakPlayers, nextRun: e.run + 1 });
         const kind = clipKindFor(e, setRecord);
         if (kind) {
           const id = this.newId();
@@ -182,7 +182,7 @@ export class History {
       peakPlayers: this.runPeak, clipId: id,
     });
     this.recordVersion = this.level.version;
-    void this.store.saveWorld({ levelId: track, deaths: e.deaths, record: this.recordMark(world), peakPlayers: this.peakPlayers });
+    void this.store.saveWorld({ levelId: track, deaths: e.deaths, record: this.recordMark(world), peakPlayers: this.peakPlayers, nextRun: e.run + 1 });
     void this.store.addHallOfFame({ levelId: track, beatenAt: at, deathCount: e.deaths, peakPlayers: this.peakPlayers, run: e.run, clipId: id });
     let resolve!: (c: ClipRow | null) => void;
     this.making.set(id, new Promise((r) => { resolve = r; }));
@@ -250,11 +250,26 @@ export class History {
   }
 
   /** Bookkeeping fields for the live snapshot. */
-  live(): Pick<LiveSnapshot, 'runStartedAt' | 'runPeak' | 'runMaxX' | 'peakPlayers' | 'recordVersion' | 'trackPeaks'> {
+  live(): Pick<LiveSnapshot, 'runStartedAt' | 'runPeak' | 'runMaxX' | 'peakPlayers' | 'recordVersion' | 'trackPeaks' | 'pendingClip'> {
+    const p = this.pending;
     return {
       runStartedAt: this.runStartedAt, runPeak: this.runPeak, runMaxX: this.runMaxX, peakPlayers: this.peakPlayers, recordVersion: this.recordVersion,
       trackPeaks: [...this.trackPeaks],
+      ...(p ? { pendingClip: { id: p.id, kind: p.kind, run: p.run, progress: p.progress, cause: p.cause, deaths: p.deaths } } : {}),
     };
+  }
+
+  /**
+   * A clip that was announced before a restart can no longer be made (its frames were in memory).
+   * Saves an empty placeholder under its id, so its link answers "this clip didn't make it" (410)
+   * instead of 404. Clips are written once per id, so this never replaces a clip that was saved.
+   */
+  markLost(c: PendingClipRef): void {
+    void this.store.saveClip({
+      id: c.id, levelId: this.track, levelVersion: this.level.version, run: c.run, kind: c.kind, createdAt: this.now(),
+      progress: c.progress, cause: c.cause, deaths: c.deaths, replay: new Uint8Array(0), og: null,
+    });
+    this.log(`[clips] clip ${c.id} for run ${c.run} was being made during the restart: marked lost`);
   }
 
   restore(s: Pick<LiveSnapshot, 'runStartedAt' | 'runPeak' | 'runMaxX' | 'peakPlayers' | 'recordVersion' | 'trackPeaks'>, freshRun: boolean): void {

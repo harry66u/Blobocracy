@@ -1,4 +1,4 @@
-import { MSG_STATE, isControlText, parseControl, type RelayControl, type SimControl } from '@blobocracy/shared';
+import { MSG_STATE, isControlText, parseControl, validSimControl, type RelayControl, type SimControl } from '@blobocracy/shared';
 
 export interface SimLinkOptions {
   url: string;
@@ -59,16 +59,21 @@ export class SimLink {
     };
     ws.onmessage = (m) => {
       this.lastHeard = Date.now();
-      if (typeof m.data !== 'string') {
-        const buf = m.data as ArrayBuffer;
-        if (new Uint8Array(buf, 0, 1)[0] === MSG_STATE) this.o.onFrame(buf);
-        return;
-      }
-      if (isControlText(m.data)) {
-        const c = parseControl(m.data);
-        if (c) this.o.onControl(c as SimControl);
-      } else {
-        this.o.onEvent(m.data);
+      // an exception in a WebSocket event handler would end the relay process: never let one out
+      try {
+        if (typeof m.data !== 'string') {
+          const buf = m.data as ArrayBuffer;
+          if (buf.byteLength > 0 && new Uint8Array(buf, 0, 1)[0] === MSG_STATE) this.o.onFrame(buf);
+          return;
+        }
+        if (isControlText(m.data)) {
+          const c = parseControl(m.data);
+          if (c && validSimControl(c)) this.o.onControl(c);
+        } else {
+          this.o.onEvent(m.data);
+        }
+      } catch (e) {
+        console.warn(`[edge] bad message from the sim: ${e instanceof Error ? e.message : String(e)}`);
       }
     };
     ws.onclose = () => this.drop();

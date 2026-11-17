@@ -50,11 +50,15 @@ export class SessionAuthority {
     return want.length === got.length && timingSafeEqual(want, got);
   }
 
-  /** `c1.<bits>.<expMs>.<random>.<sig>`: solve SHA-256(challenge + ":" + nonce) with `bits` zero bits. */
-  challenge(): { challenge: string; bits: number; exp: number } {
+  /**
+   * `c1.<bits>.<expMs>.<random>.<sig>`: solve SHA-256(challenge + ":" + nonce) with `bits` zero bits.
+   * `extraBits` makes it harder (each bit doubles the work), e.g. for a crowded address range.
+   */
+  challenge(extraBits = 0): { challenge: string; bits: number; exp: number } {
     const exp = this.now() + this.challengeTtlMs;
-    const body = `c1.${this.powBits}.${exp}.${b64u(randomBytes(12))}`;
-    return { challenge: `${body}.${this.sign(body)}`, bits: this.powBits, exp };
+    const bits = this.powBits > 0 ? this.powBits + Math.max(0, Math.floor(extraBits)) : 0;
+    const body = `c1.${bits}.${exp}.${b64u(randomBytes(12))}`;
+    return { challenge: `${body}.${this.sign(body)}`, bits, exp };
   }
 
   redeem(challenge: string, nonce: number): { token: string; sid: string; exp: number } | { error: 'sig' | 'expired' | 'pow' | 'used' } {

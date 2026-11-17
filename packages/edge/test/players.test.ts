@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { EdgeCrowd } from '../src/players';
 
 const L = 1, R = 2, J = 4;
@@ -24,6 +24,23 @@ describe('edge crowd: weighted counts', () => {
     expect(w.left).toBe(1);
     expect(w.active).toBeCloseTo(5, 6);
     expect(c.summarize(1100).buckets[R]).toBe(10); // raw buckets stay unweighted
+  });
+
+  test('IPv6: nested caps per /64 (4), /56 (8) and /48 (16), all applied (I3)', () => {
+    const c = new EdgeCrowd(opts);
+    // 40 sockets, each in its own /64, spread over the /56s of one /48: a free /48 holds 65,536 /64s
+    for (let i = 0; i < 40; i++) { c.add(i + 1, `2001:db8:1:${(i % 5) * 256 + i}::1`); c.input(i + 1, R, 1000); }
+    expect(c.summarize(1100).weighted.right).toBeCloseTo(16, 6);
+    const d = new EdgeCrowd(opts);
+    // 12 /64s in one /56: at most 8 votes
+    for (let i = 0; i < 12; i++) { d.add(i + 1, `2001:db8:2:${i}::1`); d.input(i + 1, R, 1000); }
+    expect(d.summarize(1100).weighted.right).toBeCloseTo(8, 6);
+    // a few households in a /48 are untouched
+    const e = new EdgeCrowd(opts);
+    for (let i = 0; i < 3; i++) { e.add(i + 1, `2001:db8:3:${i * 256}::1`); e.input(i + 1, R, 1000); }
+    e.add(9, '2001:db8:3:1::1'); e.input(9, L, 1000);
+    expect(e.summarize(1100).weighted).toMatchObject({ right: 3, left: 1, active: 4 });
+    expect(c.stats().influenceCappedIps).toBeGreaterThanOrEqual(1);
   });
 
   test('a shared IP with few active players still gives each a full vote', () => {
@@ -115,5 +132,23 @@ describe('edge crowd: sample for the crowd dots', () => {
     expect(next).not.toContain(first[0]);
     c.setSampleQuota(1);
     expect(c.summarize(30).sample.length).toBe(1);
+  });
+});
+
+describe('flag memory (M2)', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  test('remembered flags older than an hour are pruned, so the map cannot grow without bound', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1_700_000_000_000);
+    const c = new EdgeCrowd(opts);
+    for (let i = 1; i <= 500; i++) { c.add(i, `10.0.${i >> 8}.${i & 255}`, `sid${i}`); c.flag(i, 'rate'); c.remove(i); }
+    expect(c.flagMemory()).toBe(500);
+    vi.setSystemTime(1_700_000_000_000 + 2 * 3600_000);
+    c.add(1000, '10.9.9.9', 'fresh'); c.flag(1000, 'regular');
+    c.summarize(Date.now());
+    expect(c.flagMemory()).toBe(1);
+    // a remembered flag still sticks within the hour
+    c.add(1001, '10.9.9.9', 'fresh');
+    expect(c.isFlagged(1001)).toBe(true);
   });
 });

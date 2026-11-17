@@ -1,7 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Redis } from 'ioredis';
+import type { ReplayKind } from '@blobocracy/shared';
 import type { WorldSnapshot } from './world';
+
+/** A clip announced to players (at a death or a win) but not made yet. */
+export interface PendingClipRef { id: string; kind: ReplayKind; run: number; progress: number; cause: string; deaths: number }
 
 /**
  * The live snapshot (spec §9 Redis `live:snapshot`): current level and version, the run in
@@ -25,6 +29,13 @@ export interface LiveSnapshot {
   trackPeaks?: [number, number][];
   /** The level is being played as an encore (world.encore says the same; kept for readers of the snapshot). */
   encore?: boolean;
+  /**
+   * The clip being made when the snapshot was taken (death hold or celebration). Its frames are
+   * not in the snapshot (up to 60 s of frames, rewritten every 2 s, would multiply the snapshot's
+   * size and write volume ~100x), so after a restart it is marked lost: its link then says the clip
+   * didn't make it instead of "not found" forever.
+   */
+  pendingClip?: PendingClipRef;
   /** Banned IPs/CIDRs (admin), so a restart does not unban anyone. */
   bans: string[];
   savedAt: number;

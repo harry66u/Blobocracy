@@ -5,9 +5,9 @@ import {
   type EdgeNotice, type ServerEvent, type SimControl,
 } from '@blobocracy/shared';
 import { gzipSync } from 'node:zlib';
-import { ApiProxy, absolutizeMeta, clipPreview, originOf, simHttpBase, withPreview, type ClipMetaJson } from './api';
+import { ApiProxy, KNOWN_TRACKS, TokenBuckets, absolutizeMeta, canonicalApi, clipPreview, originAllowed, originOf, simHttpBase, withPreview, type ClipMetaJson } from './api';
 import { FrameGate, LoadMonitor, admit, DEFAULT_LOAD, type AdmitPolicy, type LoadThresholds } from './gate';
-import { BanList, clientIp, ipKey } from './ip';
+import { BanList, clientIp, ipKey, prefixKey } from './ip';
 import { SimLink } from './link';
 import { EdgeCrowd } from './players';
 import { LocalAbuseShare, type AbuseShare } from './shared';
@@ -28,6 +28,8 @@ export interface EdgeOptions {
   ipVoteCap?: number;
   /** Sockets per IP (default 32). */
   ipConnCap?: number;
+  /** An IPv6 /48 holding more sockets than this on the relay gets a proof of work 2 bits (4x) harder (default 16). */
+  crowdedPrefixSessions?: number;
   /** Input changes per second per socket (default 20). */
   rateLimit?: number;
   /** The built client (packages/client/dist). */
@@ -49,13 +51,28 @@ export interface EdgeOptions {
   summaryHz?: number;
   /** The sim's internal HTTP (the read API); default derived from simUrl (same host and port). */
   simHttpUrl?: string;
-  /** Public origin for link previews, e.g. https://blobocracy.com (default: the request's Host). */
+  /** Public origin for link previews, e.g. https://blobocracy.com (default: the request's Host). Also an allowed Origin. */
   publicUrl?: string;
+  /** Accept Origin http(s)://localhost:* on /ws and POST /session (dev servers on another port; never in production). */
+  allowLocalOrigins?: boolean;
   /** Per-IP counts and flags shared with the other relays (Redis); default: this relay only. */
   abuse?: AbuseShare;
+  /** Read API requests the sim must answer (cache misses) per IP: default a burst of 20, then 2 a second. */
+  apiRate?: { perSecond: number; burst: number };
+  /** Read API fetches to the sim at once from this relay (default 8); past it stale copies or 503s. */
+  apiMaxInflight?: number;
+  /**
+   * A socket that sent no input for this long is closed (code 4001; the page rejoins on the next
+   * key press or tap). Default 10 minutes; 0 = never. Forgotten tabs otherwise cost egress forever.
+   */
+  idleDisconnectMs?: number;
 }
 
-interface PlayerData { id: number; ip: string; ipk: string; sid: string; watcher: boolean; idx: number }
+/** Close codes the client understands (packages/client/src/net.ts). */
+export const CLOSE_IDLE = 4001;
+export const CLOSE_PACKED = 4002;
+
+interface PlayerData { id: number; ip: string; ipk: string; p48: string | null; sid: string; watcher: boolean; idx: number; lastInput: number }
 type Sock = uWS.WebSocket<PlayerData>;
 
 const SIM_DOWN = JSON.stringify({ t: 'sim', up: false } satisfies EdgeNotice);
@@ -75,7 +92,10 @@ export async function startEdge(o: EdgeOptions) {
     ipVoteCap: o.ipVoteCap ?? 4, rateLimit: o.rateLimit ?? 20, sampleQuota: DEFAULT_LINK_SAMPLE,
     onFlag: (sid, reason) => abuse.flag(sid, reason),
   });
-  const api = new ApiProxy(o.simHttpUrl ?? simHttpBase(o.simUrl));
+  const api = new ApiProxy(o.simHttpUrl ?? simHttpBase(o.simUrl), { maxInflight: o.apiMaxInflight ?? 8 });
+  const apiBuckets = new TokenBuckets(o.apiRate ?? { perSecond: 2, burst: 20 });
+  /** May this IP make the sim answer `key` now? Cached answers and fetches already running are free. */
+  const apiAllowed = (key: string, ip: string) => !api.wouldFetch(key) || apiBuckets.take(ipKey(ip));
   const bans = new BanList();
   const gate = new FrameGate();
   const load = new LoadMonitor({ ...DEFAULT_LOAD, ...o.load });
@@ -93,11 +113,14 @@ export async function startEdge(o: EdgeOptions) {
   const sockets: Sock[] = [];
   const bySid = new Map<string, Sock>();
   const ipConns = new Map<string, number>();
+  /** Sockets per IPv6 /48 (a crowded one earns a harder proof of work). */
+  const prefixConns = new Map<string, number>();
+  const crowded = o.crowdedPrefixSessions ?? 16;
   let bytesUnreported = 0;
   let bytesTotal = 0;
   const counters = {
-    framesIn: 0, framesPlay: 0, framesWatch: 0, sessionsIssued: 0, replaced: 0,
-    rejected: { banned: 0, token: 0, ipCap: 0, packed: 0, pow: 0 },
+    framesIn: 0, framesPlay: 0, framesWatch: 0, sessionsIssued: 0, replaced: 0, shed: 0, idleClosed: 0,
+    rejected: { banned: 0, token: 0, ipCap: 0, packed: 0, pow: 0, apiRate: 0, origin: 0 },
   };
   const clientToEdge = new Reservoir(8192);
   let cpu = 0, rssMb = 0, backpressure = 0;
@@ -109,6 +132,20 @@ export async function startEdge(o: EdgeOptions) {
     app.publish(topic, msg, binary);
   };
   const isPacked = () => admit(policy, crowd.stats().connections) === 'packed';
+  /**
+   * The cap is hard (review I1): at tier 100 only the always-on relays keep players, up to their
+   * capacity. A relay that is not always-on closes every socket (Fly can then stop the machine),
+   * and an always-on one closes those beyond its capacity, newest first. They see the packed message.
+   */
+  const shed = () => {
+    if (policy.tier < 100) return;
+    const keep = policy.alwaysOn ? policy.capacity : 0;
+    if (sockets.length <= keep) return;
+    const extra = [...sockets].sort((x, y) => y.getUserData().id - x.getUserData().id).slice(0, sockets.length - keep);
+    counters.shed += extra.length;
+    console.log(`[edge ${name}] budget spent: shedding ${extra.length} sockets to the packed page`);
+    for (const ws of extra) ws.end(CLOSE_PACKED, 'packed: the monthly budget is spent');
+  };
 
   const link = new SimLink({
     url: o.simUrl,
@@ -129,6 +166,7 @@ export async function startEdge(o: EdgeOptions) {
         case 'policy':
           policy = { tier: c.tier, alwaysOn: c.alwaysOn, capacity: c.capacity, frameHz: c.frameHz, sampleQuota: c.sampleQuota };
           crowd.setSampleQuota(c.sampleQuota);
+          shed();
           break;
         case 'welcome':
           welcome = c.ev.t === 'welcome' ? c.ev : welcome;
@@ -162,6 +200,7 @@ export async function startEdge(o: EdgeOptions) {
     Buffer.from(res.getRemoteAddressAsText()).toString(),
     o.trustTestIpHeader === true,
   );
+  const originOk = (req: uWS.HttpRequest) => originAllowed(req.getHeader('origin'), req.getHeader('host'), o.publicUrl, o.allowLocalOrigins === true);
   const json = (res: uWS.HttpResponse, status: string, body: unknown, cache = 'no-store') => {
     const text = JSON.stringify(body);
     countSend(text.length + 200, 1);
@@ -188,19 +227,21 @@ export async function startEdge(o: EdgeOptions) {
       const key = req.getHeader('sec-websocket-key'), proto = req.getHeader('sec-websocket-protocol'), ext = req.getHeader('sec-websocket-extensions');
       const t = new URLSearchParams(req.getQuery() ?? '').get('t') ?? '';
       if (bans.has(ip)) { counters.rejected.banned++; res.writeStatus('403 Forbidden').end(); return; }
+      if (!originOk(req)) { counters.rejected.origin++; res.writeStatus('403 Forbidden').end('cross-site connections are not allowed'); return; }
       const session = auth.verify(t);
       if (!session) { counters.rejected.token++; res.writeStatus('401 Unauthorized').end('session token required'); return; }
       const ipk = ipKey(ip);
       if ((ipConns.get(ipk) ?? 0) + abuse.remoteConns(ipk) >= ipConnCap) { counters.rejected.ipCap++; res.writeStatus('429 Too Many Requests').end('too many connections from this address'); return; }
       const role = admit(policy, crowd.stats().connections);
       if (role === 'packed') { counters.rejected.packed++; res.writeStatus('503 Service Unavailable').end('packed'); return; }
-      res.upgrade<PlayerData>({ id: nextId++, ip, ipk, sid: session.sid, watcher: role === 'watcher', idx: -1 }, key, proto, ext, context);
+      res.upgrade<PlayerData>({ id: nextId++, ip, ipk, p48: prefixKey(ip, 48), sid: session.sid, watcher: role === 'watcher', idx: -1, lastInput: Date.now() }, key, proto, ext, context);
     },
     open: (ws) => {
       const d = ws.getUserData();
       d.idx = sockets.length;
       sockets.push(ws);
       ipConns.set(d.ipk, (ipConns.get(d.ipk) ?? 0) + 1);
+      if (d.p48) prefixConns.set(d.p48, (prefixConns.get(d.p48) ?? 0) + 1);
       const old = bySid.get(d.sid);
       bySid.set(d.sid, ws);
       if (old) { counters.replaced++; old.end(4000, 'replaced by a newer connection'); }
@@ -217,7 +258,7 @@ export async function startEdge(o: EdgeOptions) {
       if (!isBinary) return;
       const m = decodeClient(msg);
       if (!m) return;
-      if (m.type === 'input') { crowd.input(ws.getUserData().id, m.bits, Date.now()); return; }
+      if (m.type === 'input') { const d = ws.getUserData(); d.lastInput = Date.now(); crowd.input(d.id, m.bits, d.lastInput); return; }
       if (o.latencyProbe) {
         const oneWay = (Date.now() % 2 ** 32 - m.t + 2 ** 32) % 2 ** 32;
         if (oneWay < 60_000) clientToEdge.add(oneWay);
@@ -230,6 +271,7 @@ export async function startEdge(o: EdgeOptions) {
       crowd.remove(d.id);
       const n = (ipConns.get(d.ipk) ?? 1) - 1;
       if (n > 0) ipConns.set(d.ipk, n); else ipConns.delete(d.ipk);
+      if (d.p48) { const m = (prefixConns.get(d.p48) ?? 1) - 1; if (m > 0) prefixConns.set(d.p48, m); else prefixConns.delete(d.p48); }
       if (bySid.get(d.sid) === ws) bySid.delete(d.sid);
       const last = sockets.pop()!;
       if (last !== ws) { sockets[d.idx] = last; last.getUserData().idx = d.idx; }
@@ -240,10 +282,16 @@ export async function startEdge(o: EdgeOptions) {
     const ip = ipOf(res, req);
     if (bans.has(ip)) { counters.rejected.banned++; return json(res, '403 Forbidden', { error: 'banned' }); }
     if (isPacked()) { counters.rejected.packed++; return json(res, '503 Service Unavailable', { packed: true }); }
-    json(res, '200 OK', auth.challenge());
+    const p48 = prefixKey(ip, 48);
+    json(res, '200 OK', auth.challenge(p48 && (prefixConns.get(p48) ?? 0) > crowded ? 2 : 0));
   });
   app.post('/session', (res, req) => {
     const ip = ipOf(res, req);
+    if (!originOk(req)) {
+      counters.rejected.origin++;
+      res.onData(() => {}); // the body is not wanted
+      return json(res, '403 Forbidden', { error: 'cross-site requests are not allowed' });
+    }
     let aborted = false;
     res.onAborted(() => { aborted = true; });
     readBody(res, 2048, (body) => {
@@ -268,8 +316,13 @@ export async function startEdge(o: EdgeOptions) {
   });
   // the read API (run history, hall of fame, clips): proxied to the sim and cached here
   app.get('/api/*', (res, req) => {
-    const q = req.getQuery();
-    const key = req.getUrl() + (q ? `?${q}` : '');
+    // only known routes and parameters, normalized: junk parameters can't bust the cache (C1)
+    const key = canonicalApi(req.getUrl(), req.getQuery() ?? '', KNOWN_TRACKS);
+    if (!key) return json(res, '404 Not Found', { error: 'not found' }, 'public, max-age=30');
+    if (!apiAllowed(key, ipOf(res, req))) {
+      counters.rejected.apiRate++;
+      return json(res, '429 Too Many Requests', { error: 'Slow down a little and try again in a moment.' });
+    }
     let aborted = false;
     res.onAborted(() => { aborted = true; });
     void api.get(key).then((r) => {
@@ -347,9 +400,12 @@ export async function startEdge(o: EdgeOptions) {
       // clip links: the clip page with this clip's title and preview image for link unfurls
       const page = files.get('/clip.html');
       if (!page) { res.writeStatus('404 Not Found').end('not found'); return; }
+      const metaKey = `/api/clips/${clip[1]}/meta`;
+      // random ids can't keep the sim busy: past this IP's share of misses, the plain page (no preview)
+      if (!apiAllowed(metaKey, ipOf(res, req))) { counters.rejected.apiRate++; send(res, htmlFor('/clip.html', page, origin), gzipOk); return; }
       let aborted = false;
       res.onAborted(() => { aborted = true; });
-      void api.get(`/api/clips/${clip[1]}/meta`).then((r) => {
+      void api.get(metaKey).then((r) => {
         if (aborted) return;
         let meta: ClipMetaJson | undefined;
         if (r.status === 200) { try { meta = JSON.parse(r.body.toString()) as ClipMetaJson; } catch { /* plain page */ } }
@@ -385,7 +441,7 @@ export async function startEdge(o: EdgeOptions) {
     }
   }, 1000 / (o.summaryHz ?? 60));
 
-  let lastCpu = process.cpuUsage(), lastWall = performance.now();
+  let lastCpu = process.cpuUsage(), lastWall = performance.now(), loadTicks = 0;
   const loadTimer = setInterval(() => {
     const c = process.cpuUsage(), w = performance.now();
     cpu = ((c.user - lastCpu.user + c.system - lastCpu.system) / 1000) / Math.max(1, w - lastWall);
@@ -398,6 +454,8 @@ export async function startEdge(o: EdgeOptions) {
       if (ws.getBufferedAmount() > 1024) backed++;
     }
     backpressure = n ? backed / n : 0;
+    if (++loadTicks % 60 === 0) apiBuckets.prune();
+    shed();
     const was = load.degraded;
     if (load.sample(cpu, backpressure, Date.now()) !== was) console.log(`[edge ${name}] ${load.degraded ? 'overloaded: sending every other frame' : 'back to full frame rate'} (cpu ${(cpu * 100).toFixed(0)}%, backpressure ${(backpressure * 100).toFixed(0)}%)`);
   }, 1000);
@@ -409,6 +467,14 @@ export async function startEdge(o: EdgeOptions) {
     flaggedList: crowd.flaggedList(1000),
   });
   const statsTimer = setInterval(() => { link.send(JSON.stringify({ c: 'stats', stats: stats() })); }, 2000);
+  const idleMs = o.idleDisconnectMs ?? 600_000;
+  const idleTimer = idleMs > 0 ? setInterval(() => {
+    const now = Date.now();
+    for (const ws of sockets.filter((s) => now - s.getUserData().lastInput > idleMs)) {
+      counters.idleClosed++;
+      ws.end(CLOSE_IDLE, 'idle: no input for a while; press anything to rejoin');
+    }
+  }, Math.max(50, Math.min(10_000, idleMs / 4))) : undefined;
 
   const listen = await new Promise<uWS.us_listen_socket>((resolve, reject) => {
     app.listen(o.host ?? '0.0.0.0', o.port, (t) => (t ? resolve(t) : reject(new Error(`edge could not listen on ${o.port}`))));
@@ -422,7 +488,7 @@ export async function startEdge(o: EdgeOptions) {
     ipConns: () => new Map(ipConns),
     stats,
     stop: async () => {
-      clearInterval(summaryTimer); clearInterval(loadTimer); clearInterval(statsTimer);
+      clearInterval(summaryTimer); clearInterval(loadTimer); clearInterval(statsTimer); clearInterval(idleTimer);
       link.close();
       abuse.close();
       for (const p of adminPending.values()) clearTimeout(p.timer);

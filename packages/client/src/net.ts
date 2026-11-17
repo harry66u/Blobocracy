@@ -12,7 +12,13 @@ export interface NetState {
   welcome: ServerEvent | null;
   /** The edge said the game is full (budget cap reached); retried every 10 s. */
   packed: boolean;
+  /** The relay dropped this connection after a long time without input; the next press reconnects. */
+  idle: boolean;
 }
+
+/** Close codes from the edge (packages/edge/src/server.ts). */
+export const CLOSE_IDLE = 4001;
+export const CLOSE_PACKED = 4002;
 
 const BACKOFF_MIN_MS = 500;
 const BACKOFF_MAX_MS = 8000;
@@ -20,6 +26,8 @@ const PING_EVERY_MS = 2000;
 /** Frames arrive 20 times a second; this much silence means the connection is dead even if no close came. */
 const SILENCE_MS = 3000;
 const PACKED_RETRY_MS = 10_000;
+/** A socket must stay up this long before the backoff starts over (a flapping relay is not hammered). */
+const STABLE_MS = 5000;
 /** Proof-of-work tries per slice, so solving never blocks a frame for long. */
 const POW_SLICE = 4096;
 /** Reuse a session token while it has at least this long left. */
@@ -51,16 +59,21 @@ async function fetchToken(httpBase: string): Promise<{ token: string; exp: numbe
 }
 
 /**
- * Opens the game socket and keeps it open: reconnects with backoff (0.5 s doubling to 8 s).
+ * Opens the game socket and keeps it open: reconnects with jittered backoff (0.5 s doubling to 8 s, ±50%).
  * On a page served by an edge it first earns a session token with a small proof of work.
  * While the relay cannot reach the sim it says so ({t:'sim', up:false}); `connected` is then
  * false (the page shows "Reconnecting to the blob…") but the socket stays open.
  */
 export function connect(url: string, onEvent: (e: ServerEvent) => void) {
-  const state: NetState = { connected: false, latest: null, latestAt: 0, rttMs: 80, welcome: null, packed: false };
+  const state: NetState = { connected: false, latest: null, latestAt: 0, rttMs: 80, welcome: null, packed: false, idle: false };
   let ws: WebSocket | null = null;
   let backoff = BACKOFF_MIN_MS;
   let closed = false;
+  /** Not reconnecting on purpose: the tab is hidden (suspend) or the relay dropped us as idle. */
+  let paused = false;
+  let connecting = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let stableTimer: ReturnType<typeof setTimeout> | undefined;
   let lastBits = 0;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
   let lastHeard = 0;
@@ -69,7 +82,9 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
   const httpBase = url.replace(/^ws/, 'http').replace(/\/ws(\?.*)?$/, '');
 
   const open = () => {
-    if (closed) return;
+    clearTimeout(retryTimer);
+    if (closed || paused || ws) return;
+    connecting = true;
     if (!sessionMode()) { openSocket(url); return; }
     if (token && token.exp - Date.now() > TOKEN_MARGIN_MS) { openSocket(`${url}?t=${encodeURIComponent(token.token)}`); return; }
     fetchToken(httpBase).then((t) => {
@@ -77,14 +92,16 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
       token = t;
       openSocket(t ? `${url}?t=${encodeURIComponent(t.token)}` : url);
     }, (e: unknown) => {
+      connecting = false;
       if (closed) return;
-      if (e instanceof Packed) { state.packed = true; setTimeout(open, PACKED_RETRY_MS); return; }
+      if (e instanceof Packed) { state.packed = true; retryTimer = setTimeout(open, PACKED_RETRY_MS); return; }
       retryLater();
     });
   };
 
   const openSocket = (u: string) => {
-    if (closed) return;
+    connecting = false;
+    if (closed || paused || ws) return;
     ws = new WebSocket(u);
     ws.binaryType = 'arraybuffer';
     simUp = true;
@@ -92,8 +109,10 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
     ws.onopen = () => {
       opened = true;
       state.connected = true;
+      state.packed = false;
       lastHeard = performance.now();
-      backoff = BACKOFF_MIN_MS;
+      // the backoff starts over only once this socket has proved itself
+      stableTimer = setTimeout(() => { backoff = BACKOFF_MIN_MS; }, STABLE_MS);
       if (lastBits) ws!.send(encodeInput(lastBits)); // resume what the player is holding
       pingTimer = setInterval(() => {
         // Phones on cellular can lose the connection without any close event; notice the silence.
@@ -119,19 +138,24 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
     const lost = (ev?: CloseEvent) => {
       if (ev?.code === 4003) closed = true; // banned: stop knocking
       if (!opened) token = null; // refused handshake: earn a fresh token next time
+      if (ev?.code === CLOSE_IDLE) { state.idle = true; paused = true; } // back on the next press
+      if (ev?.code === CLOSE_PACKED) { state.packed = true; drop(PACKED_RETRY_MS); return; } // shed: the budget is spent
       drop();
     };
     ws.onclose = lost;
     ws.onerror = () => lost();
   };
 
-  const retryLater = () => {
-    setTimeout(open, backoff);
-    backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
+  const retryLater = (wait?: number) => {
+    if (closed || paused) return;
+    clearTimeout(retryTimer);
+    // ±50% jitter, so thousands of clients dropped at once don't all come back in the same instant
+    retryTimer = setTimeout(open, wait ?? backoff * (0.5 + Math.random()));
+    if (wait === undefined) backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
   };
 
-  /** Forget the current socket (closed or silently dead) and schedule a fresh one. */
-  const drop = () => {
+  /** Forget the current socket (closed or silently dead) and schedule a fresh one (unless paused). */
+  const drop = (wait?: number) => {
     if (!ws) return;
     const dead = ws;
     ws = null;
@@ -139,8 +163,18 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
     try { dead.close(); } catch { /* already gone */ }
     state.connected = false;
     clearInterval(pingTimer);
+    clearTimeout(stableTimer);
     if (closed) return;
-    retryLater();
+    retryLater(wait);
+  };
+
+  /** Reconnect now if paused (tab visible again, or the player pressed something after an idle drop). */
+  const resume = () => {
+    if (closed || !paused) return;
+    paused = false;
+    state.idle = false;
+    backoff = BACKOFF_MIN_MS;
+    if (!ws && !connecting) open();
   };
   open();
 
@@ -148,8 +182,17 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
     state,
     sendInput(bits: number) {
       lastBits = bits;
+      if (bits && paused && state.idle) resume();
       if (ws?.readyState === 1) ws.send(encodeInput(bits));
     },
-    close() { closed = true; drop(); },
+    /** Close the socket and stay closed until resume() (a hidden tab should not receive every frame). */
+    suspend() {
+      if (closed) return;
+      paused = true;
+      clearTimeout(retryTimer);
+      drop();
+    },
+    resume,
+    close() { closed = true; clearTimeout(retryTimer); drop(); },
   };
 }

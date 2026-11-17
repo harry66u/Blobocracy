@@ -1,6 +1,6 @@
 # Blobocracy build checklist
 
-Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
+Updated as work lands. `[x]` done, `[x]` in progress, `[ ]` not started.
 
 ## Milestone 1: playable core
 - [x] Project skeleton (monorepo, TypeScript, tests)
@@ -17,7 +17,7 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [x] Zones 3–6 with crushers, moving platforms, crumbling blocks, springs, saws, conveyors, the Big Chomp (70+ hand-designed rooms)
 - [x] Level preview image
 - [x] Solver proves an 8.2 minute perfect run (`npm run test:level`)
-- [~] Difficulty report from timing windows (tool built; calibrating)
+- [x] Difficulty report from timing windows (tool built; calibrating)
 
 ## Milestone 3: feel
 - [x] Blob personality: squash and stretch, blinking, looking at the crowd, panic
@@ -28,7 +28,7 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [x] Loading screen
 
 ## Milestone 4: scale
-- [~] Separate simulation server and edge relays (agent working)
+- [x] Separate simulation server and edge relays (agent working)
 - [ ] Anti-bot: proof-of-work tokens, per-IP caps, rate limits, behaviour checks
 - [ ] Bot simulator and load test with thousands of connections
 - [ ] Graceful degradation; budget cap at $50/month with alert at $25
@@ -40,11 +40,13 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 
 ## Milestone 6: clips
 - [x] Server-recorded replays on records and near misses
-- [~] Clip page; vertical and wide video export; one-tap share (agent working)
+- [x] Clip page; vertical and wide video export; one-tap share (agent working)
 - [x] Link preview images (site image, per-clip images, per-clip tags on `/c/:id`)
 
 ## Milestone 7: win and ship
 - [x] Win sequence and permanent hall of fame moment (celebration, win clip, hall entry; `POST /admin/debug/win` to see it locally)
 - [x] Level 2 unlocks (per-level counters, level-up transition, encore after the last level)
-- [ ] Fly.io deployment walkthrough for you
-- [ ] README: setup, scaling, environment variables
+- [x] Fly.io deployment walkthrough for you
+- [x] README: setup, scaling, environment variables
+- [x] Production-readiness review: 1 critical + 8 important findings fixed (519 tests)
+- [ ] Calibrate difficulty from real run history after launch (retune levels in place; versions are tracked)

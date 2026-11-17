@@ -79,9 +79,12 @@ describe('History', () => {
     expect(clipEv).toEqual({ t: 'clip', id: 'clip1', kind: 'record', run: 1 });
     // announced at the death, saved at the reset: a request in between waits for it
     const making = h.history.whenMade('clip1');
+    // the live snapshot names the clip being made, so a restart can say it was lost (M6)
+    expect(h.history.live().pendingClip).toMatchObject({ id: 'clip1', kind: 'record', run: 1 });
     expect(making).not.toBeNull();
     h.until((e) => e.t === 'reset');
     const made = await making!;
+    expect(h.history.live().pendingClip).toBeUndefined();
     expect(made?.kind).toBe('record');
     await h.store.drained();
 
@@ -109,7 +112,7 @@ describe('History', () => {
     expect(h.og[0]).toMatchObject({ run: 1, kind: 'record', cause: 'pit', sky: 'sunset', record: null });
 
     // the world row is written on every death, record marked with its level version
-    expect(await h.mem.loadWorld(99)).toMatchObject({ deaths: 1, record: { run: 1, version: 3 }, peakPlayers: 7 });
+    expect(await h.mem.loadWorld(99)).toMatchObject({ deaths: 1, record: { run: 1, version: 3 }, peakPlayers: 7, nextRun: 2 });
 
     // the same death again is within 5% of the record: a near miss
     h.until((e) => e.t === 'death');

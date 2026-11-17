@@ -20,6 +20,7 @@ if (!secret) {
   console.warn('[edge] SESSION_SECRET unset: using a random one (tokens only work on this edge)');
 }
 if (env.TRUST_TEST_IP_HEADER === '1' && env.NODE_ENV === 'production') throw new Error('TRUST_TEST_IP_HEADER must never be set in production');
+if (!env.RELAY_SECRET && env.NODE_ENV === 'production') throw new Error('RELAY_SECRET is required in production (fly secrets set RELAY_SECRET=..., the same value as the sim)');
 
 const simUrl = env.SIM_URL || 'ws://localhost:8081/relay';
 const name = env.EDGE_NAME || env.FLY_MACHINE_ID || `edge-${randomBytes(3).toString('hex')}`;
@@ -47,6 +48,8 @@ const edge = await startEdge({
   tokenTtlS: num('SESSION_TTL_S', 600),
   ipVoteCap: num('IP_VOTE_CAP', 4),
   ipConnCap: num('IP_CONN_CAP', 32),
+  crowdedPrefixSessions: num('CROWDED_PREFIX_SESSIONS', 16),
+  idleDisconnectMs: num('IDLE_DISCONNECT_MIN', 10) * 60_000,
   rateLimit: num('INPUT_RATE_LIMIT', 20),
   staticDir: env.STATIC_DIR || fileURLToPath(new URL('../../client/dist', import.meta.url)),
   trustTestIpHeader: env.TRUST_TEST_IP_HEADER === '1',
@@ -57,6 +60,7 @@ const edge = await startEdge({
   latencyProbe: env.LATENCY_PROBE === '1',
   simHttpUrl: env.SIM_HTTP_URL || undefined,
   publicUrl: env.PUBLIC_URL || undefined,
+  allowLocalOrigins: env.NODE_ENV !== 'production',
   abuse,
 });
 edgeRef = edge;

@@ -9,7 +9,7 @@ class FakeSocket {
   sent: unknown[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((m: { data: unknown }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((ev?: { code: number }) => void) | null = null;
   constructor(public url: string) { FakeSocket.all.push(this); }
   send(d: unknown) { this.sent.push(d); }
   close() { if (this.readyState === 3) return; this.readyState = 3; this.onclose?.(); }
@@ -102,5 +102,104 @@ describe('edge relays', () => {
     expect(c.state.packed).toBe(true);
     expect(FakeSocket.all.length).toBe(0);
     c.close();
+  });
+});
+
+const FAKE = { toFake: ['setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', 'performance'] } as Parameters<typeof vi.useFakeTimers>[0];
+
+describe('reconnect backoff (M5)', () => {
+  test('retries are jittered (±50%)', () => {
+    vi.useFakeTimers(FAKE);
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    connect('ws://x/ws', () => {});
+    FakeSocket.all[0]!.close(); // never opened: retry after 500 ms × ~1.5
+    vi.advanceTimersByTime(700);
+    expect(FakeSocket.all.length).toBe(1);
+    vi.advanceTimersByTime(100);
+    expect(FakeSocket.all.length).toBe(2);
+    vi.mocked(Math.random).mockReturnValue(0);
+    FakeSocket.all[1]!.close(); // 1000 ms × 0.5
+    vi.advanceTimersByTime(510);
+    expect(FakeSocket.all.length).toBe(3);
+    vi.restoreAllMocks();
+  });
+
+  test('the backoff only resets once a socket stayed up for 5 s (a flapping relay is not hammered)', () => {
+    vi.useFakeTimers(FAKE);
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // no jitter
+    connect('ws://x/ws', () => {});
+    const flap = () => { const s = FakeSocket.all.at(-1)!; s.open(); vi.advanceTimersByTime(1000); s.onmessage?.({ data: '{"t":"zone","run":1,"index":0,"name":"a"}' }); s.close(); };
+    flap();
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.all.length).toBe(2);
+    flap();
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.all.length).toBe(2); // 1 s now, not 0.5 s again
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.all.length).toBe(3);
+    // stays up 6 s: the next drop retries quickly again
+    const s = FakeSocket.all[2]!;
+    s.open();
+    for (let i = 0; i < 12; i++) { vi.advanceTimersByTime(500); s.onmessage?.({ data: '{"t":"zone","run":1,"index":0,"name":"a"}' }); }
+    s.close();
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.all.length).toBe(4);
+    vi.restoreAllMocks();
+  });
+});
+
+describe('budget and idle disconnects (I1)', () => {
+  test('dropped as idle (4001): no automatic reconnect; the next input reconnects at once', () => {
+    vi.useFakeTimers(FAKE);
+    vi.stubGlobal('WebSocket', FakeSocket);
+    const c = connect('ws://x/ws', () => {});
+    const s = FakeSocket.all[0]!;
+    s.open();
+    s.readyState = 3;
+    s.onclose?.({ code: 4001 });
+    expect(c.state.idle).toBe(true);
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.all.length).toBe(1);
+    c.sendInput(0); // releasing a key is not coming back
+    expect(FakeSocket.all.length).toBe(1);
+    c.sendInput(2);
+    expect(FakeSocket.all.length).toBe(2);
+    expect(c.state.idle).toBe(false);
+    FakeSocket.all[1]!.open();
+    expect(FakeSocket.all[1]!.sent.length).toBe(1); // the press that woke it
+  });
+
+  test('shed because the budget is spent (4002): shows packed and retries every 10 s', () => {
+    vi.useFakeTimers(FAKE);
+    vi.stubGlobal('WebSocket', FakeSocket);
+    const c = connect('ws://x/ws', () => {});
+    const s = FakeSocket.all[0]!;
+    s.open();
+    s.readyState = 3;
+    s.onclose?.({ code: 4002 });
+    expect(c.state.packed).toBe(true);
+    vi.advanceTimersByTime(9_000);
+    expect(FakeSocket.all.length).toBe(1);
+    vi.advanceTimersByTime(2_000);
+    expect(FakeSocket.all.length).toBe(2);
+    FakeSocket.all[1]!.open();
+    expect(c.state.packed).toBe(false);
+  });
+
+  test('suspend closes the socket without retrying; resume opens a fresh one', () => {
+    vi.useFakeTimers(FAKE);
+    vi.stubGlobal('WebSocket', FakeSocket);
+    const c = connect('ws://x/ws', () => {});
+    FakeSocket.all[0]!.open();
+    c.suspend();
+    expect(FakeSocket.all[0]!.readyState).toBe(3);
+    vi.advanceTimersByTime(30_000);
+    expect(FakeSocket.all.length).toBe(1);
+    c.resume();
+    expect(FakeSocket.all.length).toBe(2);
+    c.resume(); // already connecting: nothing more
+    expect(FakeSocket.all.length).toBe(2);
   });
 });

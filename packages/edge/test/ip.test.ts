@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { BanList, clientIp, ipKey, parseCidr } from '../src/ip';
+import { BanList, clientIp, ipKey, parseCidr, prefixKey } from '../src/ip';
 
 describe('client IP', () => {
   test('uses Fly-Client-IP when present, else the socket address', () => {
@@ -18,6 +18,15 @@ describe('client IP', () => {
     expect(ipKey('2001:db8:1:2:aaaa::1')).toBe(ipKey('2001:db8:1:2:bbbb::9'));
     expect(ipKey('2001:db8:1:3::1')).not.toBe(ipKey('2001:db8:1:2::1'));
     expect(ipKey('10.0.0.1')).toBe('10.0.0.1');
+  });
+
+  test('wider IPv6 prefixes for the nested caps: /56 and /48 (I3)', () => {
+    expect(prefixKey('2001:db8:1:2::1', 48)).toBe(prefixKey('2001:db8:1:ff00::9', 48));
+    expect(prefixKey('2001:db8:1:2::1', 48)).not.toBe(prefixKey('2001:db8:2:2::1', 48));
+    expect(prefixKey('2001:db8:1:2::1', 56)).toBe(prefixKey('2001:db8:1:ff::1', 56));
+    expect(prefixKey('2001:db8:1:2::1', 56)).not.toBe(prefixKey('2001:db8:1:100::1', 56));
+    expect(prefixKey('2001:db8:1:2::1', 48)).toBe('2001:db8:1::/48');
+    expect(prefixKey('10.0.0.1', 48)).toBeNull();
   });
 });
 

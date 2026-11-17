@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -45,10 +46,10 @@ async function token(port: number, ip = '198.51.100.1'): Promise<string> {
   return ((await r.json()) as { token: string }).token;
 }
 
-interface Client { ws: WebSocket; events: any[]; frames: StateFrame[]; notices: any[]; closed: boolean; opened: boolean }
-function client(port: number, tok: string | null, ip = '198.51.100.1'): Promise<Client> {
+interface Client { ws: WebSocket; events: any[]; frames: StateFrame[]; notices: any[]; closed: boolean; opened: boolean; code?: number; reason?: string }
+function client(port: number, tok: string | null, ip = '198.51.100.1', origin?: string): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws${tok ? `?t=${tok}` : ''}`, { headers: { 'x-test-ip': ip } } as any);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws${tok ? `?t=${tok}` : ''}`, { headers: { 'x-test-ip': ip, ...(origin ? { origin } : {}) } } as any);
     sockets.push(ws);
     ws.binaryType = 'arraybuffer';
     const c: Client = { ws, events: [], frames: [], notices: [], closed: false, opened: false };
@@ -58,7 +59,7 @@ function client(port: number, tok: string | null, ip = '198.51.100.1'): Promise<
         (e.t === 'sim' ? c.notices : c.events).push(e);
       } else { const d = decodeServer(m.data as ArrayBuffer); if (d && 'tick' in d) c.frames.push(d); }
     };
-    ws.onclose = () => { c.closed = true; if (!c.opened) reject(new Error('rejected')); };
+    ws.onclose = (ev) => { c.closed = true; c.code = ev.code; c.reason = ev.reason; if (!c.opened) reject(new Error('rejected')); };
     ws.onerror = () => { if (!c.opened) reject(new Error('rejected')); }; // undici fires no close after a refused handshake
     ws.onopen = () => { c.opened = true; resolve(c); };
   });
@@ -101,6 +102,39 @@ describe('sim + two edges', () => {
     for (let i = 0; i < 2; i++) await client(a.port, await token(a.port, '203.0.113.5'), '203.0.113.5');
     await expect(client(a.port, await token(a.port, '203.0.113.5'), '203.0.113.5')).rejects.toThrow();
     await client(a.port, await token(a.port, '203.0.113.6'), '203.0.113.6');
+  });
+
+  test('a crowded IPv6 /48 gets a harder proof of work (I3)', async () => {
+    const s = await sim();
+    const a = await edge(s, { crowdedPrefixSessions: 2 });
+    const bits = async (ip: string) => ((await (await fetch(`http://127.0.0.1:${a.port}/session`, { headers: { 'x-test-ip': ip } })).json()) as { bits: number }).bits;
+    expect(await bits('2001:db8:7:1::1')).toBe(6);
+    for (let i = 1; i <= 3; i++) await client(a.port, await token(a.port, `2001:db8:7:${i}::1`), `2001:db8:7:${i}::1`);
+    expect(await bits('2001:db8:7:99::1')).toBe(8);
+    expect(await bits('2001:db8:8:1::1')).toBe(6); // another /48
+    expect(await bits('198.51.100.40')).toBe(6);
+    // the harder challenge still redeems
+    await client(a.port, await token(a.port, '2001:db8:7:99::1'), '2001:db8:7:99::1');
+  });
+
+  test('another site cannot make its visitors join: Origin must be this site (I4)', async () => {
+    const s = await sim();
+    const a = await edge(s, { publicUrl: 'https://blobocracy.example' });
+    const own = `http://127.0.0.1:${a.port}`;
+    const post = (origin?: string) => fetch(`${own}/session`, { method: 'POST', body: '{}', headers: origin ? { origin } : {} });
+    expect((await post('https://evil.example')).status).toBe(403);
+    expect((await post('null')).status).toBe(403);
+    expect((await post(own)).status).toBe(400); // allowed through to the (failing) proof of work
+    expect((await post('https://blobocracy.example')).status).toBe(400);
+    expect((await post()).status).toBe(400); // bots without Origin still pay the proof of work
+    const t = await token(a.port, '198.51.100.30');
+    await expect(client(a.port, t, '198.51.100.30', 'https://evil.example')).rejects.toThrow();
+    await client(a.port, t, '198.51.100.30', 'https://blobocracy.example');
+    await client(a.port, await token(a.port, '198.51.100.31'), '198.51.100.31', own);
+    // localhost dev servers (Vite on another port) only when allowed
+    expect((await post('http://localhost:5173')).status).toBe(403);
+    const dev = await edge(s, { allowLocalOrigins: true });
+    expect((await fetch(`http://127.0.0.1:${dev.port}/session`, { method: 'POST', body: '{}', headers: { origin: 'http://localhost:5173' } })).status).toBe(400);
   });
 
   test('sim unreachable: relays tell clients, then reconnect when it is back', async () => {
@@ -158,6 +192,46 @@ describe('sim + two edges', () => {
     await waitFor(() => b.state().policy.tier === 100);
     expect(b.state().policy.alwaysOn).toBe(false);
     expect((await fetch(`http://127.0.0.1:${b.port}/session`, { headers: { 'x-test-ip': '198.51.100.11' } })).status).toBe(503);
+  });
+
+  test('the cap is hard: at 100% the relays that are not always-on shed their sockets to the packed page (I1)', async () => {
+    const s = await sim({
+      budget: { mode: 'cap', monthlyUsd: 50, alertUsd: 25, prices: { simHourly: 0, edgeHourly: 0, fixedMonthly: 0, egressPerGb: 0.02 } },
+      edgeCapacity: 1,
+    });
+    const a = await edge(s, { alwaysOn: true });
+    const b = await edge(s);
+    await waitFor(() => s.relayCount() === 2);
+    const inA = await client(a.port, await token(a.port, '198.51.100.50'), '198.51.100.50');
+    const extraA = await client(a.port, await token(a.port, '198.51.100.51'), '198.51.100.51'); // beyond capacity 1
+    const inB = await client(b.port, await token(b.port, '198.51.100.52'), '198.51.100.52');
+    await waitFor(() => inB.frames.length > 0);
+    s.governor.addEgress(3000e9); // $60 of egress
+    s.budgetTick();
+    await waitFor(() => inB.closed);
+    expect(inB.code).toBe(4002);
+    expect(inB.reason).toContain('packed');
+    await waitFor(() => extraA.closed);
+    expect(extraA.code).toBe(4002);
+    // the always-on relay keeps its capacity
+    const n = inA.frames.length;
+    await waitFor(() => inA.frames.length > n + 2);
+    expect(inA.closed).toBe(false);
+    expect(b.state().connections).toBe(0);
+  });
+
+  test('sockets with no input for a long time are dropped (they can rejoin at once) (I1)', async () => {
+    const s = await sim();
+    const a = await edge(s, { idleDisconnectMs: 400 });
+    const idle = await client(a.port, await token(a.port, '198.51.100.60'), '198.51.100.60');
+    const busy = await client(a.port, await token(a.port, '198.51.100.61'), '198.51.100.61');
+    const t = setInterval(() => busy.ws.send(encodeInput(Date.now() % 2 ? IN_RIGHT : 0)), 100);
+    try {
+      await waitFor(() => idle.closed, 3000);
+      expect(idle.code).toBe(4001);
+      expect(busy.closed).toBe(false);
+      await client(a.port, await token(a.port, '198.51.100.60'), '198.51.100.60');
+    } finally { clearInterval(t); }
   });
 
   test('serves the built client, marked so the page fetches a session first; clip links get the clip page', async () => {
@@ -218,5 +292,43 @@ describe('sim + two edges', () => {
     expect(page).toContain('clip</body>');
     // an unknown clip still gets the (generic) clip page
     expect(await (await fetch(`${base}/c/nope123`)).text()).toContain('<title>Blobocracy clip</title>');
+  });
+
+  test('cache-busting the read API: junk parameters share one cache entry, and one IP cannot keep the sim busy (C1)', async () => {
+    const { MemoryStore } = await import('../../sim/src/store');
+    const store = new MemoryStore();
+    let summaries = 0;
+    const counted = new Proxy(store, { get(t, p, r) { if (p === 'summary') summaries++; return Reflect.get(t, p, r); } });
+    const s = await sim({ store: counted });
+    const a = await edge(s, { apiRate: { perSecond: 1, burst: 5 } });
+    const base = `http://127.0.0.1:${a.port}`;
+    const res = await Promise.all(Array.from({ length: 30 }, (_, i) => fetch(`${base}/api/summary?x=${i}`, { headers: { 'x-test-ip': '198.51.100.20' } })));
+    expect(res.every((r) => r.status === 200)).toBe(true);
+    expect(summaries).toBe(1);
+    // distinct real pages are misses: past the burst this IP gets 429s, another IP still gets through
+    const codes: number[] = [];
+    for (let i = 1; i <= 12; i++) codes.push((await fetch(`${base}/api/runs?page=${i}`, { headers: { 'x-test-ip': '198.51.100.21' } })).status);
+    expect(codes.filter((c) => c === 429).length).toBeGreaterThanOrEqual(6);
+    expect((await fetch(`${base}/api/runs?page=50`, { headers: { 'x-test-ip': '198.51.100.22' } })).status).toBe(200);
+    // unknown routes are answered by the edge without asking the sim
+    expect((await fetch(`${base}/api/whatever?x=1`)).status).toBe(404);
+  });
+
+  test('/api/../ never reaches the other sim routes (M1)', async () => {
+    const s = await sim();
+    const a = await edge(s);
+    const get = (path: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port: a.port, path, method: 'GET' }, (res) => {
+        let body = '';
+        res.on('data', (d) => { body += d; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    const r = await get('/api/../healthz');
+    expect(r.body).not.toContain('relays');
+    expect(r.status).toBe(404);
+    expect((await get('/api/%2e%2e/admin/stats')).status).toBe(404);
   });
 });

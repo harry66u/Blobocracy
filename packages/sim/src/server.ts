@@ -57,6 +57,8 @@ export interface ServerOptions {
   log?: (msg: string) => void;
   /** How often to retry the world row after booting without it (default 10 s). */
   worldRetryMs?: number;
+  /** How often to retry loading the budget counters after a failed load at boot (default 5 s). */
+  budgetRetryMs?: number;
 }
 
 /**
@@ -97,7 +99,7 @@ export async function startServer(opts: ServerOptions) {
   if (liveUsed) { bootLevel = liveLevel!; bootEncore = liveEncore; }
   const counters = (track: number) => {
     const w = rows.get(track);
-    return { deaths: w?.deaths ?? 0, record: w?.record ? { progress: w.record.progress, run: w.record.run } : null };
+    return { deaths: w?.deaths ?? 0, record: w?.record ? { progress: w.record.progress, run: w.record.run } : null, ...(w?.nextRun ? { run: w.nextRun } : {}) };
   };
   const bootTrack = trackId(bootLevel.id, bootEncore);
   const world = new World(bootLevel, counters(bootTrack), { levels, encore: bootEncore, celebrateS: opts.celebrateS });
@@ -120,7 +122,8 @@ export async function startServer(opts: ServerOptions) {
     } else {
       // retuned level: keep the death count and record, start a fresh run on the new version
       world.deaths = live.world.deaths;
-      world.run = world.deaths + 1;
+      // a fresh run: after the one in progress (or the one that just ended), never below deaths + 1
+      world.run = Math.max(world.deaths + 1, live.world.run + (live.world.phase === 'running' || live.world.phase === 'paused' ? 0 : 1));
       world.record = live.world.record;
       for (const [k, c] of live.world.counters ?? []) world.setCounters(k, c);
       history.restore(live, true);
@@ -130,6 +133,8 @@ export async function startServer(opts: ServerOptions) {
   } else if (dbWorld) {
     log(`[store] starting ${levelTitle(bootLevel)} run ${world.run} (${world.deaths} deaths from the database)`);
   }
+  // a clip announced before the restart can't be made any more: its link says so (M6)
+  if (live?.pendingClip) history.markLost(live.pendingClip);
   // Booted with neither the database nor a snapshot: the counters started from zero. When the
   // database answers, carry its deaths and record forward (runs numbered during the gap are not
   // written over older ones: the store never replaces an existing run).
@@ -141,7 +146,7 @@ export async function startServer(opts: ServerOptions) {
         clearInterval(catchUp);
         if (!w || w.deaths <= 0 || world.track !== track) return;
         world.deaths += w.deaths;
-        world.run += w.deaths;
+        world.run += Math.max(w.deaths, (w.nextRun ?? 0) - 1);
         if (w.record && (!world.record || w.record.progress >= world.record.progress)) world.record = { progress: w.record.progress, run: w.record.run };
         history.peakPlayers = Math.max(history.peakPlayers, w.peakPlayers);
         log(`[store] database is back: counting on from ${world.deaths} deaths (run ${world.run})`);
@@ -163,7 +168,22 @@ export async function startServer(opts: ServerOptions) {
     alert: opts.alert ?? alertSender(undefined),
     now,
   });
-  await withTimeout(governor.load(), 3000, 'budget counters').catch((e: unknown) => log(`[budget] counters unavailable at boot: ${String(e)}`));
+  // Until the month's counters are read the governor saves nothing (else zeros would overwrite the
+  // real spend); keep retrying in the background, and merge when they arrive.
+  await withTimeout(governor.load(), 3000, 'budget counters').catch((e: unknown) => log(`[budget] counters unavailable at boot: ${String(e)}; retrying, nothing is saved until they load`));
+  let budgetRetry: ReturnType<typeof setInterval> | undefined;
+  if (!governor.loaded) {
+    let trying = false;
+    budgetRetry = setInterval(() => {
+      if (governor.loaded) { clearInterval(budgetRetry); return; }
+      if (trying) return;
+      trying = true;
+      void withTimeout(governor.load(), 3000, 'budget counters').then(() => {
+        clearInterval(budgetRetry);
+        log(`[budget] counters loaded: $${governor.spend().toFixed(2)} spent this month`);
+      }, () => {}).finally(() => { trying = false; });
+    }, opts.budgetRetryMs ?? 5000);
+  }
   const alwaysOnRelays = opts.alwaysOnRelays ?? 1;
   const edgeCapacity = opts.edgeCapacity ?? 3000;
 
@@ -311,7 +331,7 @@ export async function startServer(opts: ServerOptions) {
     /** Re-evaluates the budget now (tests; normally every 5 s). */
     budgetTick,
     stop: async () => {
-      clearInterval(loop); clearInterval(budgetTimer); clearInterval(saveTimer); clearInterval(welcomeTimer); clearInterval(snapshotTimer); clearInterval(catchUp);
+      clearInterval(loop); clearInterval(budgetTimer); clearInterval(saveTimer); clearInterval(welcomeTimer); clearInterval(snapshotTimer); clearInterval(catchUp); clearInterval(budgetRetry);
       governor.update(relayPrices());
       await governor.save().catch(() => {});
       saveSnapshot();

@@ -89,3 +89,34 @@ describe('server', () => {
     c.ws.close();
   });
 });
+
+describe('budget counters unavailable at boot (I2)', () => {
+  test('the sim retries the load and never saves zeros over the month', async () => {
+    const { MemoryStore } = await import('../src/budget');
+    const store = new MemoryStore();
+    const month = new Date().toISOString().slice(0, 7);
+    await store.save({ month, machineUsd: 30, egressBytes: 0, fired: [], budgetUsd: null });
+    let loads = 0;
+    const flaky = { load: () => (loads++ < 2 ? Promise.reject(new Error('redis down')) : store.load()), save: (s: any) => store.save(s) };
+    srv = await startServer({ port: null, virtualPlayers: 0, budgetStore: flaky, budgetRetryMs: 20, log: () => {} });
+    expect(srv.governor.loaded).toBe(false);
+    await waitFor(() => srv!.governor.loaded);
+    expect(srv.governor.spend()).toBeGreaterThanOrEqual(30);
+    await srv.stop();
+    srv = null;
+    expect((await store.load())!.machineUsd).toBeGreaterThanOrEqual(30);
+  });
+
+  test('a load that never succeeds: stopping does not overwrite the month', async () => {
+    const { MemoryStore } = await import('../src/budget');
+    const store = new MemoryStore();
+    const month = new Date().toISOString().slice(0, 7);
+    await store.save({ month, machineUsd: 30, egressBytes: 0, fired: [], budgetUsd: null });
+    const flaky = { load: () => Promise.reject(new Error('redis down')), save: (s: any) => store.save(s) };
+    srv = await startServer({ port: null, virtualPlayers: 0, budgetStore: flaky, budgetRetryMs: 20, log: () => {} });
+    srv.budgetTick();
+    await srv.stop();
+    srv = null;
+    expect((await store.load())!.machineUsd).toBe(30);
+  });
+});

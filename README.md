@@ -110,14 +110,14 @@ The Postgres and Redis store tests run only against real services: `TEST_DATABAS
 
 ## Deploying
 
-Step-by-step for Fly.io, from no account to a live game, is in **`docs/DEPLOY.md`**. In short: create the app, set five secrets, `fly deploy`, and pre-create stopped spike relays.
+Step-by-step for Fly.io, from no account to a live game, is in **`docs/DEPLOY.md`**. In short: create the app, set five secrets, `fly deploy --ha=false`, pre-create stopped spike relays with `fly scale count burst=4`, and (strongly recommended) add Redis.
 
 ## Scaling and cost
 
-- **Normal traffic** runs on one sim and one relay (shared-cpu machines) plus free-tier Postgres: about $12–15 a month.
-- **Spikes:** Fly's proxy starts pre-created, stopped relays when the running relay passes 1,500 players, and stops them when traffic falls. How many relays you pre-create is a hard ceiling on compute. Measured locally: a relay handles about 2,500 players on 0.4 of a CPU core, 4,900 on 0.53, at 25–45 KB of memory per player. The sim's work grows with the number of relays, not players.
+- **Normal traffic** runs on one sim and one relay (shared-cpu machines) plus Postgres and Redis: about $15–25 a month.
+- **Spikes:** Fly's proxy starts pre-created, stopped `burst` relays (performance-1x) when the running relays pass 600 players each, and stops them when traffic falls. How many relays you pre-create is a hard ceiling on compute. Measured locally: a relay handles about 2,500 players on 0.4 of a CPU core, 4,900 on 0.53, at 25–45 KB of memory per player. The sim's work grows with the number of relays, not players.
 - **Bandwidth** is the main cost in a spike: about 2.5 KB/s per player (~$3.60 an hour at 20,000 players).
-- **Cost cap:** the sim estimates month-to-date spend from machine hours and bytes sent. In cap mode (the default) it alerts at $25 and at 70/90/100% of $50, lowers the frame rate at 70%, turns new visitors into watchers at 90%, and holds capacity with a friendly "packed" page at 100%. Raise it live with `POST /admin/budget` (see `docs/DEPLOY.md`).
+- **Cost cap:** the sim estimates month-to-date spend from machine hours and bytes sent. In cap mode (the default) it alerts at $25 and at 70/90/100% of $50, lowers the frame rate at 70%, turns new visitors into watchers at 90%, and at 100% keeps players only on the always-on relay (burst relays close their sockets and everyone else gets a friendly "packed" page). Hidden tabs disconnect after a minute and sockets with no input for 10 minutes are closed (they rejoin on the next key press). Raise it live with `POST /admin/budget` (see `docs/DEPLOY.md`).
 - **Graceful degradation:** slow sockets skip frames instead of lagging; an overloaded relay sends every other frame; if the sim restarts, players see "Reconnecting to the blob…" and the run resumes from a snapshot (a restart is never a death); if Postgres is down, the game keeps going and writes queue until it returns.
 
 ## Environment variables
@@ -127,10 +127,10 @@ Every variable, with its default and which process reads it, is documented at th
 | Variable | Process | Purpose |
 |---|---|---|
 | `SESSION_SECRET` | edge | Signs session tokens (required in production). |
-| `RELAY_SECRET` | sim, edge | Shared secret for the relay ↔ sim link. |
+| `RELAY_SECRET` | sim, edge | Shared secret for the relay ↔ sim link (required in production). |
 | `ADMIN_TOKEN` | sim | Bearer token for `/admin/*` (stats, bans, budget; `POST /admin/debug/win` outside production). Unset = admin off. |
-| `DATABASE_URL` | sim | Postgres. Unset = history in memory only. |
-| `REDIS_URL` | sim, edge | Live snapshot, budget counters, shared per-IP caps. Unset = files on the sim volume. |
+| `DATABASE_URL` | sim | Postgres. Required in production unless `ALLOW_MEMORY_STORE=1` (history in memory, capped, lost on restart). |
+| `REDIS_URL` | sim, edge | Live snapshot, budget counters, shared per-IP caps and flags. Unset = files on the sim volume and per-relay caps (strongly recommended in production). |
 | `ALERT_WEBHOOK_URL` | sim | Discord/Slack webhook for budget alerts. |
 | `PUBLIC_URL` | edge | Your domain, for link previews. |
 | `BUDGET_MODE`, `MONTHLY_BUDGET_USD`, `BUDGET_ALERT_USD` | sim | `cap`, `50`, `25` (your choice). |

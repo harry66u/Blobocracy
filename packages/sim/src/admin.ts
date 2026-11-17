@@ -53,7 +53,10 @@ export function createAdmin(ctx: {
     if (!tokenOk(ctx.token, req.auth ?? '')) return { status: 401, body: { error: 'unauthorized' } };
     let body: Record<string, unknown> = {};
     if (req.body) {
-      try { body = JSON.parse(req.body) as Record<string, unknown>; } catch { return { status: 400, body: { error: 'bad json' } }; }
+      let parsed: unknown;
+      try { parsed = JSON.parse(req.body); } catch { return { status: 400, body: { error: 'bad json' } }; }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { status: 400, body: { error: 'body must be a JSON object' } };
+      body = parsed as Record<string, unknown>;
     }
     const route = `${req.method.toUpperCase()} ${req.path.replace(/\/+$/, '')}`;
     switch (route) {

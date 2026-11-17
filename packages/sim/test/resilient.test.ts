@@ -76,3 +76,53 @@ describe('ResilientStore (Postgres outage)', () => {
     await s.close();
   });
 });
+
+describe('ResilientStore: permanent errors (M4)', () => {
+  const sqlError = (code: string) => Object.assign(new Error(`sql error ${code}`), { code });
+
+  test('a write the database rejects for good (22xxx/23xxx) is logged and dropped; the queue moves on', async () => {
+    const mem = new MemoryStore();
+    let bad = true;
+    const inner = new Proxy(mem, {
+      get(t, prop, r) {
+        if (prop === 'recordRun') return async (row: RunRow) => { if (bad && row.run === 1) throw sqlError('22P02'); return mem.recordRun(row); };
+        return Reflect.get(t, prop, r);
+      },
+    }) as Store;
+    const logs: string[] = [];
+    const s = new ResilientStore(inner, { retryMinMs: 5, log: (m) => logs.push(m) });
+    await s.init();
+    await s.recordRun(run(1));
+    await s.recordRun(run(2));
+    await s.drained();
+    expect(s.status()).toMatchObject({ healthy: true, queued: 0, dropped: 1 });
+    expect((await mem.listRuns({ levelId: 1, page: 1, pageSize: 5, best: false })).runs.map((r) => r.run)).toEqual([2]);
+    expect(logs.some((l) => l.includes('run 1/1') && l.includes('22P02'))).toBe(true);
+    bad = false;
+  });
+
+  test('a clip that is dropped (rejected for good, or pushed out of a full queue) is no longer served from memory', async () => {
+    const mem = new MemoryStore();
+    const inner = new Proxy(mem, {
+      get(t, prop, r) {
+        if (prop === 'saveClip') return async () => { throw sqlError('23514'); };
+        return Reflect.get(t, prop, r);
+      },
+    }) as Store;
+    const s = new ResilientStore(inner, { retryMinMs: 5, log: () => {} });
+    await s.init();
+    await s.saveClip({ id: 'bad1', levelId: 1, levelVersion: 1, run: 1, kind: 'record', createdAt: 0, progress: 0.2, cause: 'pit', deaths: 1, replay: new Uint8Array([1]), og: null });
+    await s.drained();
+    expect(await s.getClip('bad1')).toBeNull();
+
+    const { store, state } = flaky(new MemoryStore());
+    state.down = true;
+    const q = new ResilientStore(store, { retryMinMs: 1000, maxQueue: 1, log: () => {} });
+    await q.saveClip({ id: 'old1', levelId: 1, levelVersion: 1, run: 1, kind: 'record', createdAt: 0, progress: 0.2, cause: 'pit', deaths: 1, replay: new Uint8Array([1]), og: null });
+    await q.recordRun(run(2));
+    expect(q.status().dropped).toBe(1);
+    state.down = false;
+    expect(await q.getClip('old1')).toBeNull();
+    await q.close();
+  });
+});

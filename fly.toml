@@ -1,23 +1,35 @@
 # Blobocracy on Fly.io: DRAFT for milestone 7, nothing has been deployed.
-# One app, one image, two process groups (spec §4, §10):
-#   sim   exactly one machine, always on, no public ports. Physics, voting, budget governor.
-#   edge  the public relays: min 1 always running, more started by Fly's proxy past the soft limit.
+# One app, one image, three process groups (spec §4, §10):
+#   sim    exactly one machine, always on, no public ports. Physics, voting, budget governor.
+#   edge   the always-on public relay: one shared-cpu-1x machine. Its process command sets
+#          EDGE_ALWAYS_ON=1, so the sim counts it (not whichever relay connected first) as the
+#          always-on capacity.
+#   burst  spike relays: performance-1x machines, created once with `fly scale count burst=4` and
+#          left stopped; Fly's proxy starts them past the soft limit and stops them when idle. Their
+#          process command sets MACHINE_HOURLY_USD, so the budget governor charges their real price.
+# Size and per-machine env live in this file (process commands, [[vm]] per group), so `fly deploy`
+# keeps them: it resets machine sizes and env to what this file says.
 # Edges reach the sim over Fly's private network (6PN) at sim.process.<app>.internal:8081.
+# First deploy: `fly deploy --ha=false` (otherwise Fly creates two machines per group, and there
+# must only ever be one sim).
 #
 # ── Environment variables ─────────────────────────────────────────────────────────────────────
 # Secrets (fly secrets set NAME=value, never in this file):
 #   SESSION_SECRET        edge  HMAC key for proof-of-work challenges and session tokens (same on every edge). Required.
-#   RELAY_SECRET          both  shared secret relays present to the sim link (header x-relay-secret).
+#   RELAY_SECRET          both  shared secret relays present to the sim link (header x-relay-secret). Required in
+#                               production: the sim and the edges refuse to start without it.
 #   ADMIN_TOKEN           sim   bearer token for /admin/* (stats, ban IP/CIDR, raise budget, reset flags). Unset = admin off.
 #   ALERT_WEBHOOK_URL     sim   POSTed JSON budget alerts (Discord/Slack compatible). Unset = alerts only logged.
 #   DATABASE_URL          sim   Postgres (Neon/Supabase free tier): runs, clips, hall of fame, levels + level_versions,
 #                               the world row. Migrations in packages/sim/migrations run on boot (idempotent).
-#                               Unset = history kept in memory only. If Postgres goes away the game keeps going and
-#                               writes queue in memory until it is back (spec §10).
+#                               Required in production (the sim refuses to start without it unless
+#                               ALLOW_MEMORY_STORE=1: history then lives in memory, capped, and is lost on restart).
+#                               If Postgres goes away the game keeps going and writes queue in memory until it is back.
 #   REDIS_URL             both  sim: the live snapshot `live:snapshot` (resume the run in progress after a restart)
 #                               and the budget counters `budget:state`; edges: per-IP socket counts across relays and
 #                               shadow-ban flags by session. Unset = sim uses LIVE_STATE_FILE / BUDGET_STATE_FILE (or
-#                               memory) and each edge keeps its own counts.
+#                               memory) and each edge keeps its own counts. Strongly recommended in production (see
+#                               docs/DEPLOY.md "Redis"): without it, per-IP caps and shadow-ban flags are per relay.
 # Sim:
 #   LOCAL_RELAY=0               no in-process browser relay (that is single-process dev mode only)
 #   SIM_LINK_PORT / _HOST       relay link + internal HTTP (health, admin); listen on "::" for 6PN
@@ -34,33 +46,43 @@
 #   SEED_DEMO_RUNS              dev only: fill the in-memory history with N fake runs (refused with DATABASE_URL)
 #   ALWAYS_ON_RELAYS            how many relays count as always-on capacity (1 = min_machines_running)
 #   EDGE_CAPACITY               players per always-on relay before the 90%/100% tiers turn newcomers into
-#                               watchers / the packed page; keep equal to the edge soft_limit below
+#                               watchers / the packed page; keep equal to the soft_limit below
+#   ALLOW_MEMORY_STORE          1 = run in production without DATABASE_URL (not recommended)
 #   VIRTUAL_PLAYERS             in-process fake crowd (0 in production)
 # Edge:
 #   SIM_URL                     ws://sim.process.<app>.internal:8081/relay
 #   POW_DIFFICULTY              leading zero bits of the session proof of work: 14 ≈ 50-150 ms on a phone
 #   SESSION_TTL_S               session token lifetime (600)
-#   IP_VOTE_CAP                 all sockets from one IP (IPv6: one /64) weigh at most this many votes (4)
+#   IP_VOTE_CAP                 all sockets from one IP (IPv6: one /64) weigh at most this many votes (4); IPv6 also
+#                               2x per /56 and 4x per /48, all applied
 #   IP_CONN_CAP                 sockets per IP per relay (32)
+#   CROWDED_PREFIX_SESSIONS     an IPv6 /48 with more sockets than this on a relay gets a 2-bit harder proof of work (16)
+#   IDLE_DISCONNECT_MIN         close sockets that sent no input for this many minutes (10; 0 = never); the page
+#                               rejoins on the next key press or tap
 #   INPUT_RATE_LIMIT            input changes per second per socket (20)
-#   EDGE_ALWAYS_ON              1 on a relay that must count as always-on (else the sim picks the oldest relay)
-#   MACHINE_HOURLY_USD          this relay's $/h for the governor (set per machine for performance-class extras)
+#   EDGE_ALWAYS_ON              1 on a relay that must count as always-on (set by the edge group's process command)
+#   MACHINE_HOURLY_USD          this relay's $/h for the governor (set by the burst group's process command)
 #   EGRESS_OVERHEAD_BYTES       per-message WebSocket+TLS+TCP/IP overhead counted as egress (80)
 #   STATIC_DIR                  built client (default packages/client/dist)
-#   PUBLIC_URL                  e.g. https://blobocracy.com: the origin in link previews (default: the request's Host)
+#   PUBLIC_URL                  e.g. https://blobocracy.com: the origin in link previews (default: the request's Host);
+#                               also an allowed Origin for /ws and POST /session (as is the request's own Host)
 #   SIM_HTTP_URL                the sim's internal HTTP for /api/* (default: SIM_URL's host and port over http)
 #   TRUST_TEST_IP_HEADER        load tests only; the edge refuses to start with it in production
 #   LATENCY_PROBE               load tests only
 #
 # ── Scaling and cost ──────────────────────────────────────────────────────────────────────────
-# Extra relays are pre-created and left stopped (a few cents of disk each), so their number is a hard
-# ceiling on compute cost (MAX_RELAYS, spec §10), e.g. 4 extras:
-#   fly machine clone <edge-machine-id> --vm-size performance-1x --env MACHINE_HOURLY_USD=0.0431   (×4, then fly machine stop)
+# Burst relays are pre-created and left stopped (a few cents of disk each), so their number is a hard
+# ceiling on compute cost (MAX_RELAYS, spec §10), e.g. 4: `fly scale count burst=4`, then stop them
+# (docs/DEPLOY.md step 6).
 # Measured locally (milestone 4 load test, 20 Hz frames): an edge used ~0.4 of a CPU core for 2,500
-# players and ~0.53 for 4,900, and 25-45 KB of memory per player. A shared-cpu-1x machine only
-# sustains a fraction of a core before Fly throttles it, so the always-on shared edge's soft limit
-# is kept modest and spikes land on the performance-class extras; a throttled relay notices and
-# drops to every other frame.
+# players and ~0.53 for 4,900, and 25-45 KB of memory per player. A shared-cpu-1x machine's baseline
+# is 1/16 of a core (it bursts above that from a small balance before Fly throttles it), so the
+# soft limit is 600 sockets (≈0.1 core); spikes land on the performance-class burst relays, and a
+# throttled relay notices and drops to every other frame.
+# At 100% of the budget the burst relays close their sockets (the players see "packed") and only the
+# always-on edge keeps EDGE_CAPACITY players. Fly's proxy still starts a stopped burst relay when the
+# edge is past its soft limit (the game cannot stop that); it then only serves the packed page, and
+# Fly stops it again after a few idle minutes. Its hours are counted in the budget.
 
 app = "blobocracy"
 primary_region = "iad"
@@ -72,7 +94,9 @@ kill_timeout = "10s"
 
 [processes]
   sim = "node --import tsx packages/sim/src/main.ts"
-  edge = "node --import tsx packages/edge/src/main.ts"
+  # per-group env goes in the command (`env` is in the image), so deploys and restarts keep it
+  edge = "env EDGE_ALWAYS_ON=1 node --import tsx packages/edge/src/main.ts"
+  burst = "env MACHINE_HOURLY_USD=0.0431 node --import tsx packages/edge/src/main.ts"
 
 [env]
   NODE_ENV = "production"
@@ -91,16 +115,19 @@ kill_timeout = "10s"
   BUDGET_STATE_FILE = "/data/budget.json"
   LIVE_STATE_FILE = "/data/live.json"
   ALWAYS_ON_RELAYS = "1"
-  EDGE_CAPACITY = "1500"
+  EDGE_CAPACITY = "600"
   POW_DIFFICULTY = "14"
   IP_VOTE_CAP = "4"
   IP_CONN_CAP = "32"
   INPUT_RATE_LIMIT = "20"
+  IDLE_DISCONNECT_MIN = "10"
 
-# The public face: only the edge group gets a service. WebSockets ride the http handler, which also
-# sets Fly-Client-IP (used for the per-IP caps and bans).
+# The public face: the edge and burst groups share one service (Fly supports a service across process
+# groups). WebSockets ride the http handler, which also sets Fly-Client-IP (per-IP caps and bans).
+# min_machines_running counts machines of the whole service in the primary region: Fly keeps one
+# running but does not promise which; check `fly status` after a spike (docs/DEPLOY.md step 6).
 [http_service]
-  processes = ["edge"]
+  processes = ["edge", "burst"]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "stop"
@@ -109,8 +136,8 @@ kill_timeout = "10s"
 
   [http_service.concurrency]
     type = "connections"
-    soft_limit = 1500   # Fly starts the next stopped relay past this (keep EDGE_CAPACITY equal)
-    hard_limit = 2500   # never more sockets than this on one relay
+    soft_limit = 600    # Fly starts the next stopped relay past this (keep EDGE_CAPACITY equal); one value for both groups
+    hard_limit = 1000   # never more sockets than this on one relay
 
   [[http_service.checks]]
     grace_period = "10s"
@@ -147,3 +174,9 @@ kill_timeout = "10s"
   processes = ["edge"]
   size = "shared-cpu-1x"
   memory = "512mb"
+
+# The spike relays: their own size here, so `fly deploy` never shrinks them back to shared-cpu.
+[[vm]]
+  processes = ["burst"]
+  size = "performance-1x"
+  memory = "2gb"

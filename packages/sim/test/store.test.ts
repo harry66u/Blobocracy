@@ -31,6 +31,23 @@ function contract(name: string, make: () => Promise<Store>, reset?: (s: Store) =
       expect((await s.loadWorld(1))?.deaths).toBe(6);
     });
 
+    test('world row: the all-time record only ever goes up (a row from a sim that booted without the database never clobbers it)', async () => {
+      await s.saveWorld({ levelId: 1, deaths: 9, record: { progress: 0.7, run: 8, version: 1 }, peakPlayers: 1 });
+      await s.saveWorld({ levelId: 1, deaths: 2, record: { progress: 0.1, run: 2, version: 2 }, peakPlayers: 1 });
+      expect((await s.loadWorld(1))?.record).toEqual({ progress: 0.7, run: 8, version: 1 });
+      await s.saveWorld({ levelId: 1, deaths: 3, record: null, peakPlayers: 1 });
+      expect(await s.loadWorld(1)).toMatchObject({ deaths: 9, record: { progress: 0.7, run: 8, version: 1 } });
+      await s.saveWorld({ levelId: 1, deaths: 10, record: { progress: 0.8, run: 10, version: 2 }, peakPlayers: 1 });
+      expect((await s.loadWorld(1))?.record).toEqual({ progress: 0.8, run: 10, version: 2 });
+    });
+
+    test('world row: the next run number is kept and never goes back', async () => {
+      await s.saveWorld({ levelId: 2, deaths: 3, record: null, peakPlayers: 1, nextRun: 6 });
+      expect((await s.loadWorld(2))?.nextRun).toBe(6);
+      await s.saveWorld({ levelId: 2, deaths: 3, record: null, peakPlayers: 1, nextRun: 4 });
+      expect((await s.loadWorld(2))?.nextRun).toBe(6);
+    });
+
     test('runs: insert is idempotent, pagination, best filter, clip attach', async () => {
       for (let i = 1; i <= 23; i++) await s.recordRun(run(i, (i % 7) / 10 + i / 100));
       await s.recordRun(run(5, 0.12)); // a second write for run 5 never replaces the first
@@ -101,3 +118,17 @@ if (pgUrl) {
 } else {
   test.skip('PostgresStore (set TEST_DATABASE_URL to run)', () => {});
 }
+
+describe('MemoryStore limits (M7)', () => {
+  test('the oldest clips and runs are dropped past the limits, so memory stays bounded', async () => {
+    const s = new MemoryStore(Date.now, { maxClips: 2, maxRuns: 3 });
+    for (const id of ['c1', 'c2', 'c3']) {
+      await s.saveClip({ id, levelId: 1, levelVersion: 1, run: 1, kind: 'record', createdAt: 0, progress: 0.2, cause: 'pit', deaths: 1, replay: new Uint8Array([1]), og: null });
+    }
+    expect(await s.getClip('c1')).toBeNull();
+    expect((await s.getClip('c3'))?.id).toBe('c3');
+    for (let i = 1; i <= 5; i++) await s.recordRun(run(i, i / 10));
+    const page = await s.listRuns({ levelId: 1, page: 1, pageSize: 10, best: false });
+    expect(page.runs.map((r) => r.run)).toEqual([5, 4, 3]);
+  });
+});

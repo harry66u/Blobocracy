@@ -14,6 +14,8 @@ export interface WorldRow {
   record: RecordMark | null;
   /** Most players online at once, ever (for the hall of fame). */
   peakPlayers: number;
+  /** The next run's number: deaths + 1, plus one for each win on this track (an encore win uses a number without a death). Older rows: absent. */
+  nextRun?: number;
 }
 
 export interface RunRow {
@@ -102,6 +104,7 @@ export interface Store {
   levels(): Promise<LevelRow[]>;
   levelVersions(levelId: number): Promise<LevelVersionRow[]>;
   loadWorld(levelId: number): Promise<WorldRow | null>;
+  /** Upserts the row. Deaths, peak players and the next run never go down; the record is only replaced by a better one. */
   saveWorld(w: WorldRow): Promise<void>;
   /** Insert once per (level, run number): a retried write is harmless and a run is never written over. */
   recordRun(r: RunRow): Promise<void>;

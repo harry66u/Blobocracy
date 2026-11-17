@@ -78,6 +78,15 @@ describe('server: win and level progression', () => {
     expect(hall.entries.map((e: { levelId: number; encore: boolean }) => [e.levelId, e.encore])).toEqual([[1, false], [2, false]]);
   });
 
+  test('boots on the encore with its stored next run number (an encore win took a run number without a death)', async () => {
+    const store = new MemoryStore();
+    await store.addHallOfFame({ levelId: 1, beatenAt: 5, deathCount: 1, peakPlayers: 1, run: 2, clipId: null });
+    await store.addHallOfFame({ levelId: 2, beatenAt: 6, deathCount: 1, peakPlayers: 1, run: 2, clipId: null });
+    await store.saveWorld({ levelId: ENCORE_TRACK + 2, deaths: 3, record: { progress: 1, run: 5, version: 3 }, peakPlayers: 1, nextRun: 6 });
+    srv = await startServer({ port: null, virtualPlayers: 0, levels: TINY, store, log: quiet });
+    expect(srv.world).toMatchObject({ encore: true, deaths: 3, run: 6 });
+  });
+
   test('a restart after the switch resumes on level 2 from the live snapshot, level 1 still beaten', async () => {
     const live = new MemoryLiveStore();
     const store = new MemoryStore();

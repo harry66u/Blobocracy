@@ -132,3 +132,47 @@ describe('budget governor', () => {
     expect(await new JsonFileStore(file).load()).toMatchObject({ month: '2026-11', egressBytes: 2e9 });
   });
 });
+
+describe('budget counters that fail to load at boot (I2)', () => {
+  /** A counter store whose first `failures` loads throw (Redis or the volume not ready yet). */
+  class Flaky extends MemoryStore {
+    loads = 0;
+    saves = 0;
+    constructor(private failures: number) { super(); }
+    override async load() { if (this.loads++ < this.failures) throw new Error('ECONNREFUSED'); return super.load(); }
+    override async save(s: Parameters<MemoryStore['save']>[0]) { this.saves++; return super.save(s); }
+  }
+
+  test('nothing is saved until a load succeeded, so the real month is never overwritten with zeros', async () => {
+    const store = new Flaky(1);
+    await store.save({ month: '2026-11', machineUsd: 30, egressBytes: usd(5), fired: ['$25 alert'], budgetUsd: null });
+    store.saves = 0;
+    const { g, advance } = setup({}, store);
+    await expect(g.load()).rejects.toThrow();
+    g.update(1);
+    advance(HOUR);
+    g.update(1);
+    await g.save();
+    expect(store.saves).toBe(0);
+    expect((await store.load())!.machineUsd).toBe(30);
+    expect(g.loaded).toBe(false);
+  });
+
+  test('a late load merges by max with what accrued since boot, then saves resume', async () => {
+    const store = new Flaky(1);
+    await store.save({ month: '2026-11', machineUsd: 30, egressBytes: usd(5), fired: ['$25 alert'], budgetUsd: 80 });
+    const { g, advance, alerts } = setup({}, store);
+    await g.load().catch(() => {});
+    g.addEgress(usd(1));
+    advance(HOUR);
+    g.update(0);
+    await g.load();
+    expect(g.loaded).toBe(true);
+    expect(g.spend()).toBeCloseTo(30 + 5, 4);
+    expect(g.budget()).toBe(80);
+    g.update(0);
+    expect(alerts.map((a) => a.label)).not.toContain('$25 alert'); // already sent this month
+    await g.save();
+    expect((await store.load())!.machineUsd).toBeCloseTo(30, 4);
+  });
+});

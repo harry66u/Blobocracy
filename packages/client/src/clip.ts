@@ -40,7 +40,7 @@ async function load(): Promise<Replay> {
     await new Promise((r) => setTimeout(r, MAKING_RETRY_MS));
     res = await fetch(source, { cache: 'no-store' });
   }
-  if (!res.ok) throw new Error(res.status === 404 ? 'missing' : `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(res.status === 404 ? 'missing' : res.status === 410 ? 'lost' : `HTTP ${res.status}`);
   const r = await unpackReplay(new Uint8Array(await res.arrayBuffer()));
   if (!r) throw new Error('corrupt');
   if (!levelOf(r)) throw new Error('level');
@@ -324,6 +324,7 @@ function wire(): void {
 function fail(reason: string): void {
   page.classList.add('failed');
   if (reason === 'level') $('oops-text').textContent = 'This clip is from a level that has since changed, so it can no longer be played back here.';
+  if (reason === 'lost') $('oops-text').textContent = "This clip didn't make it: the blob restarted while it was being made. The run still counts.";
   document.title = 'Clip not found · Blobocracy';
 }
 

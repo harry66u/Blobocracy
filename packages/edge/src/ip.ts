@@ -31,6 +31,30 @@ export function ipKey(ip: string): string {
   return v === null ? ip : `${(v >> 64n).toString(16)}::/64`;
 }
 
+/**
+ * An IPv6 address's /`bits` prefix as a key (e.g. "2001:db8:1::/48"); null for IPv4. One home
+ * gets a /64, but a /56 or a /48 is free from many providers and tunnel brokers, so the vote cap
+ * is applied at each of /64, /56 and /48 (review I3).
+ */
+export function prefixKey(ip: string, bits: number): string | null {
+  if (isIP(ip) !== 6) return null;
+  const v = parse6(ip);
+  if (v === null) return null;
+  const masked = v & maskOf(128, bits);
+  const groups: string[] = [];
+  for (let i = 0; i < Math.ceil(bits / 16); i++) groups.push(((masked >> BigInt(112 - 16 * i)) & 0xffffn).toString(16));
+  return `${groups.join(':')}::/${bits}`;
+}
+
+/** The nested vote caps one address falls under: [key, cap] for its /64 (or IPv4 address), /56 and /48. */
+export function capKeys(ip: string, cap: number): [string, number][] {
+  const out: [string, number][] = [[ipKey(ip), cap]];
+  const k56 = prefixKey(ip, 56), k48 = prefixKey(ip, 48);
+  if (k56) out.push([k56, cap * 2]);
+  if (k48) out.push([k48, cap * 4]);
+  return out;
+}
+
 function parse4(s: string): number | null {
   const p = s.split('.');
   if (p.length !== 4) return null;

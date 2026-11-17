@@ -1,6 +1,17 @@
 import type { ClipRow, HallRow, LevelInfo, RunRow, Store, WorldRow } from './types';
 
-interface Op { label: string; key?: string; run: () => Promise<void> }
+interface Op { label: string; key?: string; run: () => Promise<void>; /** Called when the write is given up on. */ onDrop?: () => void }
+
+/**
+ * Postgres errors that retrying can never fix: class 22 (data exception: bad value, out of range)
+ * and class 23 (integrity constraint violation). Such a write is logged and dropped, so one bad
+ * row can never stall every write behind it. Everything else (connection refused, timeouts, the
+ * server restarting) is treated as an outage and retried.
+ */
+export function permanentError(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^2[23][0-9A-Z]{3}$/.test(code);
+}
 
 export interface ResilientOptions {
   retryMinMs?: number;
@@ -81,7 +92,7 @@ export class ResilientStore implements Store {
     while (this.queue.length > max) {
       const gone = this.queue.splice(this.flushing ? 1 : 0, 1)[0];
       this.dropped++;
-      if (gone) this.log(`queue full: dropped ${gone.label}`);
+      if (gone) { gone.onDrop?.(); this.log(`queue full: dropped ${gone.label}`); }
     }
     if (this.healthy && !this.timer) void this.flush();
     return Promise.resolve();
@@ -100,7 +111,15 @@ export class ResilientStore implements Store {
     try {
       if (!this.ready) { await this.inner.init(); this.ready = true; }
       while (this.queue.length) {
-        await this.queue[0]!.run();
+        const op = this.queue[0]!;
+        try {
+          await op.run();
+        } catch (e) {
+          if (!permanentError(e)) throw e;
+          this.dropped++;
+          op.onDrop?.();
+          this.log(`dropped ${op.label}: the database rejected it (${(e as { code: string }).code}: ${e instanceof Error ? e.message : String(e)})`);
+        }
         this.queue.shift();
         if (!this.healthy) {
           this.healthy = true;
@@ -133,6 +152,7 @@ export class ResilientStore implements Store {
     return this.enqueue({
       label: `clip ${c.id}`,
       run: async () => { await this.inner.saveClip(c); this.pendingClips.delete(c.id); },
+      onDrop: () => { if (this.pendingClips.get(c.id) === c) this.pendingClips.delete(c.id); },
     });
   }
   addHallOfFame(h: HallRow) { return this.enqueue({ label: `hall ${h.levelId}`, run: () => this.inner.addHallOfFame(h) }); }

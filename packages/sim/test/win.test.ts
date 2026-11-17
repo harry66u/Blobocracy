@@ -79,7 +79,7 @@ describe('winning a level', () => {
     celebrate(w);
     expect(w).toMatchObject({ deaths: 7, run: 8, record: { progress: 0.4, run: 3 } });
     // level 1's final counters are kept for its track
-    expect(w.countersFor(1)).toEqual({ deaths: 0, record: { progress: 1, run: 1 } });
+    expect(w.countersFor(1)).toEqual({ deaths: 0, record: { progress: 1, run: 1 }, run: 2 });
   });
 
   test('beating the last level starts an encore of it with its own counter; beating the encore encores again', () => {
@@ -91,12 +91,22 @@ describe('winning a level', () => {
     expect(w).toMatchObject({ encore: true, deaths: 0, run: 1, record: null });
     expect(w.track).toBe(ENCORE_TRACK + 2);
     expect(w.welcome(1)).toMatchObject({ levelId: 2, encore: true, deaths: 0 });
-    expect(w.countersFor(2)).toEqual({ deaths: 12, record: { progress: 1, run: 13 } });
+    expect(w.countersFor(2)).toEqual({ deaths: 12, record: { progress: 1, run: 13 }, run: 14 });
     // the encore can be won too: its counters carry on in the encore
     w.deaths = 3; w.run = 4;
     win(w);
     expect(celebrate(w).at(-1)).toMatchObject({ t: 'level', levelId: 2, encore: true });
-    expect(w).toMatchObject({ encore: true, deaths: 3, run: 4, record: { progress: 1, run: 4 } });
+    // ...on a new run number: the winning run 4 is already written, the next one is run 5
+    expect(w).toMatchObject({ encore: true, deaths: 3, run: 5, record: { progress: 1, run: 4 } });
+    expect(w.countersFor(w.track)).toMatchObject({ deaths: 3 });
+    expect(w.snapshot().run).toBe(5);
+  });
+
+  test('the next run number survives a restart from the world row (an encore win is not a death)', () => {
+    const w = new World(TINY2, { deaths: 3, record: { progress: 1, run: 4 }, run: 5 }, { levels: TINY, encore: true });
+    expect(w.run).toBe(5);
+    // older rows without it: deaths + 1
+    expect(new World(TINY2, { deaths: 3, record: null }).run).toBe(4);
   });
 
   test('a level list without the next level: the beaten level encores', () => {
@@ -138,7 +148,7 @@ describe('resuming across a level switch (live snapshot)', () => {
     expect(b.level).toBe(TINY2);
     expect(b).toMatchObject({ run: 1, deaths: 0, encore: false, phase: 'running' });
     expect(b.body).toEqual(a.body);
-    expect(b.countersFor(1)).toEqual({ deaths: 40, record: { progress: 1, run: 41 } });
+    expect(b.countersFor(1)).toEqual({ deaths: 40, record: { progress: 1, run: 41 }, run: 42 });
   });
 
   test('mid-celebration: the party resumes where it was and still unlocks the next level on time', () => {

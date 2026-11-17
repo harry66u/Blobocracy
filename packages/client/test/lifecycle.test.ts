@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { releaseWhenHidden } from '../src/lifecycle';
+import { releaseWhenHidden, suspendWhenHidden } from '../src/lifecycle';
 
 describe('releaseWhenHidden', () => {
   function setup() {
@@ -28,5 +28,31 @@ describe('releaseWhenHidden', () => {
     stop();
     win.dispatchEvent(new Event('blur'));
     expect(release).not.toHaveBeenCalled();
+  });
+});
+
+describe('suspendWhenHidden (I1: hidden tabs stop receiving frames)', () => {
+  test('closes the connection after a minute hidden, reconnects when visible again', () => {
+    vi.useFakeTimers();
+    try {
+      const doc = Object.assign(new EventTarget(), { hidden: false });
+      const net = { suspend: vi.fn(), resume: vi.fn() };
+      suspendWhenHidden(doc, net, 60_000);
+      doc.hidden = true;
+      doc.dispatchEvent(new Event('visibilitychange'));
+      vi.advanceTimersByTime(59_000);
+      expect(net.suspend).not.toHaveBeenCalled();
+      doc.hidden = false;
+      doc.dispatchEvent(new Event('visibilitychange')); // back in time: nothing was closed
+      vi.advanceTimersByTime(5_000);
+      expect(net.suspend).not.toHaveBeenCalled();
+      doc.hidden = true;
+      doc.dispatchEvent(new Event('visibilitychange'));
+      vi.advanceTimersByTime(61_000);
+      expect(net.suspend).toHaveBeenCalledTimes(1);
+      doc.hidden = false;
+      doc.dispatchEvent(new Event('visibilitychange'));
+      expect(net.resume).toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });

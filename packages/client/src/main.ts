@@ -9,7 +9,7 @@ import { CameraRig } from './camera.ts';
 import { Director } from './director.ts';
 import { connect } from './net.ts';
 import { keepDeathCard } from './hudstate.ts';
-import { releaseWhenHidden } from './lifecycle.ts';
+import { releaseWhenHidden, suspendWhenHidden } from './lifecycle.ts';
 import { InputState, isGameKey } from './input.ts';
 import { causeName, DEATH_SHAKE, levelUpFrame, swoopDuration } from './moments.ts';
 import { hudLevelLabel, levelView, type LevelView } from './levels.ts';
@@ -153,14 +153,18 @@ onLayout = () => controls.place();
 const wantsKeys = (e: KeyboardEvent) => !controls.isOpen() && !(e.target instanceof HTMLElement && e.target.closest('.bl-hudbtn, .bl-modal'));
 addEventListener('keydown', (e) => {
   audio.unlock(); // browsers need a key press or tap first
+  net.resume(); // dropped as idle: any key rejoins
   if (isGameKey(e.code) && wantsKeys(e)) { e.preventDefault(); input.key(e.code, true); }
 });
 addEventListener('keyup', (e) => { if (isGameKey(e.code)) { if (wantsKeys(e)) e.preventDefault(); input.key(e.code, false); } });
 addEventListener('pointerdown', () => {
   audio.unlock();
+  net.resume(); // dropped as idle: any tap rejoins
 }, { capture: true });
 // Never leave a button "held" when the player switches away (review focus 1).
 releaseWhenHidden(window, document, () => input.releaseAll());
+// A tab left in the background stops receiving frames after a minute and rejoins when shown (I1).
+suspendWhenHidden(document, net);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { pos = null; rig.snap(); } // snap to the latest frame on return
 });
@@ -254,7 +258,9 @@ function frame(): void {
   winShare.place(d.win ? winCardShareSlot() : null, d.win ? clips.forRun(d.win.run) : null);
   audio.tick();
 
-  const msg = !net.state.connected && loadingGone ? 'Reconnecting to the blob…' : '';
+  const msg = net.state.idle ? 'You were away for a while. Press any key or tap to jump back in.'
+    : net.state.packed ? 'Blobocracy is packed right now. You will rejoin as soon as there is room.'
+    : !net.state.connected && loadingGone ? 'Reconnecting to the blob…' : '';
   if (statusEl.textContent !== msg) { statusEl.textContent = msg; statusEl.classList.toggle('show', !!msg); }
   requestAnimationFrame(frame);
 }

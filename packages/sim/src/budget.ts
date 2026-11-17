@@ -69,11 +69,15 @@ export class MemoryStore implements CounterStore {
 export class JsonFileStore implements CounterStore {
   constructor(private path: string) {}
   async load(): Promise<BudgetState | null> {
+    let text: string;
     try {
-      return JSON.parse(await readFile(this.path, 'utf8')) as BudgetState;
-    } catch {
-      return null;
+      text = await readFile(this.path, 'utf8');
+    } catch (e) {
+      // no file yet is a fresh month; any other read error must not pass for one (it would be saved over)
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw e;
     }
+    try { return JSON.parse(text) as BudgetState; } catch { return null; }
   }
   async save(s: BudgetState): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
@@ -106,6 +110,12 @@ const PERCENTS = [50, 70, 90, 100] as const;
 export class BudgetGovernor {
   private state: BudgetState;
   private lastAccrual: number;
+  /**
+   * The stored month has been read (or there was none). Until then nothing is saved: a sim that
+   * booted while Redis or the volume was unreachable starts counting from zero, and saving that
+   * would wipe the month's real spend (and with it the cap).
+   */
+  loaded = false;
 
   constructor(
     private cfg: BudgetConfig,
@@ -120,14 +130,32 @@ export class BudgetGovernor {
     return { month: monthOf(now), machineUsd: 0, egressBytes: 0, fired: [], budgetUsd: null };
   }
 
+  /**
+   * Reads the month-to-date counters. Safe to call again after a failure: a late load is merged
+   * by max with whatever accrued since boot (so neither the stored month nor the gap is lost).
+   */
   async load(): Promise<void> {
-    const now = this.deps.now();
+    if (this.loaded) return;
     const s = await this.deps.store.load();
-    if (s && s.month === monthOf(now)) this.state = { ...BudgetGovernor.fresh(now), ...s };
-    this.lastAccrual = now;
+    if (this.loaded) return;
+    const now = this.deps.now();
+    if (s && s.month === monthOf(now)) {
+      const cur = this.state;
+      const stored: BudgetState = { ...BudgetGovernor.fresh(now), ...s };
+      this.state = cur.month === stored.month ? {
+        month: stored.month,
+        machineUsd: Math.max(stored.machineUsd, cur.machineUsd),
+        egressBytes: Math.max(stored.egressBytes, cur.egressBytes),
+        fired: [...new Set([...stored.fired, ...cur.fired])],
+        budgetUsd: cur.budgetUsd ?? stored.budgetUsd,
+      } : stored;
+    }
+    this.loaded = true;
   }
 
+  /** Persists the counters; a no-op until a load has succeeded. */
   async save(): Promise<void> {
+    if (!this.loaded) return;
     await this.deps.store.save(this.state);
   }
 

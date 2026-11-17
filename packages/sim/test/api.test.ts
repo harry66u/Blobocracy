@@ -139,3 +139,42 @@ describe('API over HTTP', () => {
     expect(await c.json()).toMatchObject({ deaths: 300, run: 301 });
   });
 });
+
+describe('API load shedding (C1)', () => {
+  test('the summary (the heavy query) is computed once per track for a few seconds, however many ask', async () => {
+    const store = await seeded();
+    let calls = 0;
+    const counting = new Proxy(store, { get(t, p, r) { if (p === 'summary') calls++; return Reflect.get(t, p, r); } });
+    const api = createApi({ store: counting, level: LEVEL1, levelName: 'Level 1', counter });
+    const all = await Promise.all(Array.from({ length: 50 }, () => api('/api/summary', '')));
+    expect(all.every((r) => r.status === 200)).toBe(true);
+    await api('/api/summary', '');
+    expect(calls).toBe(1);
+  });
+
+  test('history reads run a few at a time; past a short queue they are refused, not piled up', async () => {
+    const store = await seeded();
+    let running = 0, peak = 0;
+    const gates: (() => void)[] = [];
+    const slow = new Proxy(store, {
+      get(t, p, r) {
+        if (p !== 'listRuns') return Reflect.get(t, p, r);
+        return async (q: Parameters<Store['listRuns']>[0]) => {
+          running++; peak = Math.max(peak, running);
+          await new Promise<void>((res) => gates.push(res));
+          running--;
+          return store.listRuns(q);
+        };
+      },
+    });
+    const api = createApi({ store: slow, level: LEVEL1, levelName: 'Level 1', counter, reads: { concurrency: 2, queue: 3 } });
+    const pending = Array.from({ length: 10 }, (_, i) => api('/api/runs', `page=${i + 1}`));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(peak).toBe(2);
+    while (gates.length || running) { gates.splice(0).forEach((g) => g()); await new Promise((r) => setTimeout(r, 5)); }
+    const codes = (await Promise.all(pending)).map((r) => r.status);
+    expect(codes.filter((c) => c === 200).length).toBe(5);
+    expect(codes.filter((c) => c === 503).length).toBe(5);
+    expect(peak).toBe(2);
+  });
+});

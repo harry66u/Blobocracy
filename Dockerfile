@@ -1,4 +1,4 @@
-# Blobocracy: one image for both Fly process groups (sim, edge). Draft, not deployed yet.
+# Blobocracy: one image for every Fly process group (sim, edge, burst). Draft, not deployed yet.
 # uWebSockets.js ships glibc binaries, so the base is Debian slim (not Alpine).
 
 # ── build: install the workspace and build the client ────────────────────────────────────────
@@ -27,5 +27,5 @@ COPY --from=build /app/packages/sim ./packages/sim
 COPY --from=build /app/packages/edge ./packages/edge
 COPY --from=build /app/packages/client/dist ./packages/client/dist
 EXPOSE 8080 8081
-# fly.toml [processes] picks the sim or the edge; the edge is the default.
+# fly.toml [processes] picks the sim or an edge (edge, burst); the edge is the default.
 CMD ["node", "--import", "tsx", "packages/edge/src/main.ts"]

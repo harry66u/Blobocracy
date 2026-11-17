@@ -16,6 +16,14 @@ const num = (name: string, fallback: number) => {
   return n;
 };
 
+const production = env.NODE_ENV === 'production';
+// The relay link carries every vote and the admin API: in production only relays holding the secret may join.
+if (production && !env.RELAY_SECRET) throw new Error('RELAY_SECRET is required in production (fly secrets set RELAY_SECRET=...)');
+// Without a database, runs and clips live in memory on a 512 MB machine and vanish on every deploy.
+if (production && !env.DATABASE_URL && env.ALLOW_MEMORY_STORE !== '1') {
+  throw new Error('DATABASE_URL is required in production (fly secrets set DATABASE_URL=...); set ALLOW_MEMORY_STORE=1 to run without one (history kept in memory, capped, lost on restart)');
+}
+
 const localRelay = env.LOCAL_RELAY !== '0';
 const port = num('PORT', 8080);
 const virtualPlayers = num('VIRTUAL_PLAYERS', 0);

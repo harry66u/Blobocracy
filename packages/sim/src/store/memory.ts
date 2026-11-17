@@ -2,7 +2,17 @@ import type {
   ClipRow, HallEntry, HallRow, LevelInfo, LevelRow, LevelVersionRow, RunPage, RunQuery, RunRow, SeriesPoint, Store, Summary, WorldRow,
 } from './types';
 
-/** Everything in memory: dev, tests, and production without DATABASE_URL (history is lost on restart). */
+export interface MemoryLimits {
+  /** Clips kept (oldest dropped first); a clip is tens of KB. Default 200. */
+  maxClips?: number;
+  /** Runs kept per track (lowest run numbers dropped first). Default 100,000. */
+  maxRuns?: number;
+}
+
+/**
+ * Everything in memory: dev, tests, and (only with ALLOW_MEMORY_STORE=1) production without
+ * DATABASE_URL. History is lost on restart, and bounded so a long-running sim cannot run out of memory.
+ */
 export class MemoryStore implements Store {
   private levelRows = new Map<number, LevelRow & { name: string }>();
   private versions: LevelVersionRow[] = [];
@@ -11,7 +21,13 @@ export class MemoryStore implements Store {
   private clips = new Map<string, ClipRow>();
   private hall: HallRow[] = [];
 
-  constructor(private now: () => number = Date.now) {}
+  private readonly maxClips: number;
+  private readonly maxRuns: number;
+
+  constructor(private now: () => number = Date.now, limits: MemoryLimits = {}) {
+    this.maxClips = limits.maxClips ?? 200;
+    this.maxRuns = limits.maxRuns ?? 100_000;
+  }
 
   async init(): Promise<void> {}
   async close(): Promise<void> {}
@@ -34,7 +50,20 @@ export class MemoryStore implements Store {
     const w = this.worlds.get(levelId);
     return w ? structuredClone(w) : null;
   }
-  async saveWorld(w: WorldRow): Promise<void> { this.worlds.set(w.levelId, structuredClone(w)); }
+  async saveWorld(w: WorldRow): Promise<void> {
+    const old = this.worlds.get(w.levelId);
+    const row = structuredClone(w);
+    if (old) {
+      // like the SQL: counters never go back, and only a better record replaces the stored one
+      row.deaths = Math.max(old.deaths, w.deaths);
+      row.peakPlayers = Math.max(old.peakPlayers, w.peakPlayers);
+      if (old.record && !(w.record && w.record.progress > old.record.progress)) row.record = { ...old.record };
+      const next = Math.max(old.nextRun ?? 0, w.nextRun ?? 0);
+      if (next > 0) row.nextRun = next; else delete row.nextRun;
+    }
+    if (row.nextRun === undefined) delete row.nextRun;
+    this.worlds.set(w.levelId, row);
+  }
 
   private levelRuns(levelId: number): Map<number, RunRow> {
     let m = this.runs.get(levelId);
@@ -43,14 +72,24 @@ export class MemoryStore implements Store {
   }
   async recordRun(r: RunRow): Promise<void> {
     const m = this.levelRuns(r.levelId);
-    if (!m.has(r.run)) m.set(r.run, { ...r, sessionId: r.sessionId ?? null });
+    if (m.has(r.run)) return;
+    m.set(r.run, { ...r, sessionId: r.sessionId ?? null });
+    if (m.size > this.maxRuns) {
+      let oldest = Infinity;
+      for (const n of m.keys()) if (n < oldest) oldest = n;
+      m.delete(oldest);
+    }
   }
   async attachClip(levelId: number, run: number, clipId: string): Promise<void> {
     const r = this.levelRuns(levelId).get(run);
     if (r && !r.clipId) r.clipId = clipId;
   }
 
-  async saveClip(c: ClipRow): Promise<void> { this.clips.set(c.id, { ...c, sessionId: c.sessionId ?? null }); }
+  async saveClip(c: ClipRow): Promise<void> {
+    if (this.clips.has(c.id)) return; // written once per id, like the SQL (ON CONFLICT DO NOTHING)
+    this.clips.set(c.id, { ...c, sessionId: c.sessionId ?? null });
+    while (this.clips.size > this.maxClips) this.clips.delete(this.clips.keys().next().value!);
+  }
   async getClip(id: string): Promise<ClipRow | null> { const c = this.clips.get(id); return c ? { ...c } : null; }
 
   async listRuns(q: RunQuery): Promise<RunPage> {

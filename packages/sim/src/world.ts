@@ -4,7 +4,12 @@ import {
   type BlendOut, type Body, type Dynamics, type Level, type Phase, type ServerEvent, type VoteCounts, type WinEvent,
 } from '@blobocracy/shared';
 
-export interface WorldInit { deaths: number; record: { progress: number; run: number } | null }
+export interface WorldInit {
+  deaths: number;
+  record: { progress: number; run: number } | null;
+  /** The next run's number (default deaths + 1; an encore win uses a number without a death). */
+  run?: number;
+}
 export type { Phase };
 
 export interface WorldOptions {
@@ -46,7 +51,9 @@ const NEAR_RECORD = 0.05;
 /** Below this, a record is too small for dying near it to be a "so close" moment. */
 const MIN_RECORD_FOR_NEAR_MISS = 0.1;
 
-const copyInit = (c: WorldInit): WorldInit => ({ deaths: c.deaths, record: c.record ? { ...c.record } : null });
+const copyInit = (c: WorldInit): WorldInit => ({ deaths: c.deaths, record: c.record ? { ...c.record } : null, ...(c.run !== undefined ? { run: c.run } : {}) });
+/** The next run on a track: its stored counter, never below deaths + 1. */
+const nextRunOf = (c: WorldInit) => Math.max(c.deaths + 1, c.run ?? 0);
 
 /**
  * The one shared world: a single blob, one run at a time, one life.
@@ -88,7 +95,7 @@ export class World {
     this.encore = opts.encore ?? false;
     this.celebrateTicks = Math.max(1, Math.round((opts.celebrateS ?? CELEBRATE_S) * TICK_HZ));
     this.deaths = init.deaths;
-    this.run = init.deaths + 1;
+    this.run = nextRunOf(init);
     this.record = init.record;
     this.body = createBody(level);
   }
@@ -106,7 +113,7 @@ export class World {
 
   /** Counters of a track: live for the one being played, else the last known. */
   countersFor(track: number): WorldInit | null {
-    if (track === this.track) return { deaths: this.deaths, record: this.record ? { ...this.record } : null };
+    if (track === this.track) return { deaths: this.deaths, record: this.record ? { ...this.record } : null, run: this.run };
     const c = this.saved.get(track);
     return c ? copyInit(c) : null;
   }
@@ -268,7 +275,8 @@ export class World {
 
   /** After the celebration: on to the next level, or an encore of the last. */
   private advance(events: ServerEvent[]): void {
-    this.saved.set(this.track, { deaths: this.deaths, record: this.record ? { ...this.record } : null });
+    // the winning run took this number: the track's next run is the one after it
+    this.saved.set(this.track, { deaths: this.deaths, record: this.record ? { ...this.record } : null, run: this.run + 1 });
     const i = this.levels.findIndex((l) => l.id === this.level.id);
     const next = i >= 0 && i + 1 < this.levels.length ? this.levels[i + 1]! : null;
     if (next) { this.level = next; this.encore = false; } else this.encore = true;
@@ -276,7 +284,7 @@ export class World {
     this.saved.delete(this.track);
     this.deaths = c.deaths;
     this.record = c.record ? { ...c.record } : null;
-    this.run = this.deaths + 1;
+    this.run = nextRunOf(c);
     this.winEvent = null;
     this.celebrateLeft = 0;
     this.freshRun();

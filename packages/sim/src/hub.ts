@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import uWS from 'uWebSockets.js';
 import {
   Reservoir, decodeSummary, isControlText, parseControl, type RelayControl, type ServerEvent, type SimControl,
@@ -8,6 +9,14 @@ import type { Voters } from './crowd';
 import type { Relay } from './relay';
 
 const TOPIC = 'relays';
+
+/** Constant-time comparison of the presented relay secret. */
+export function secretOk(want: string, got: string): boolean {
+  const a = Buffer.from(want), b = Buffer.from(got);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const str = (v: unknown, max: number): string | null => (typeof v === 'string' && v.length <= max ? v : null);
 
 export interface RelayInfo {
   id: number;
@@ -69,7 +78,7 @@ export function startHub(o: HubOptions): Promise<Relay & {
     idleTimeout: 30,
     sendPingsAutomatically: true,
     upgrade: (res, req, context) => {
-      if (o.secret && req.getHeader('x-relay-secret') !== o.secret) {
+      if (o.secret && !secretOk(o.secret, req.getHeader('x-relay-secret'))) {
         res.writeStatus('401 Unauthorized').end('relay secret required');
         return;
       }
@@ -87,6 +96,18 @@ export function startHub(o: HubOptions): Promise<Relay & {
       o.onRelaysChanged();
     },
     message: (ws, msg, isBinary) => {
+      // nothing a relay sends may ever take the sim down (an exception here would end the process)
+      try { onMessage(ws, msg, isBinary); } catch (e) { console.warn(`[hub] bad message from relay ${ws.getUserData().id}: ${e instanceof Error ? e.message : String(e)}`); }
+    },
+    close: (ws) => {
+      const id = ws.getUserData().id;
+      relays.delete(id);
+      o.voters.dropRelay(id);
+      o.onRelaysChanged();
+    },
+  });
+
+  function onMessage(ws: uWS.WebSocket<LinkData>, msg: ArrayBuffer, isBinary: boolean): void {
       const r = relays.get(ws.getUserData().id);
       if (!r) return;
       if (isBinary) {
@@ -105,24 +126,22 @@ export function startHub(o: HubOptions): Promise<Relay & {
       const c = parseControl(text) as RelayControl | null;
       if (!c) return;
       if (c.c === 'hello') {
-        r.info.name = String(c.name).slice(0, 64);
+        r.info.name = (str(c.name, 1024) ?? `relay-${r.info.id}`).slice(0, 64);
         r.info.claimsAlwaysOn = c.alwaysOn === true;
-        r.info.hourlyUsd = typeof c.hourlyUsd === 'number' && c.hourlyUsd >= 0 ? c.hourlyUsd : undefined;
+        r.info.hourlyUsd = typeof c.hourlyUsd === 'number' && Number.isFinite(c.hourlyUsd) && c.hourlyUsd >= 0 ? c.hourlyUsd : undefined;
         o.onRelaysChanged();
       } else if (c.c === 'stats') {
-        r.info.stats = c.stats;
+        r.info.stats = typeof c.stats === 'object' && c.stats !== null && !Array.isArray(c.stats) ? c.stats : null;
       } else if (c.c === 'admin') {
-        const res = o.admin({ method: c.method, path: c.path, auth: c.auth, body: c.body });
+        if (typeof c.id !== 'number' || !Number.isSafeInteger(c.id)) return;
+        const method = str(c.method, 16), path = str(c.path, 2048);
+        const auth = c.auth === undefined ? '' : str(c.auth, 4096), body = c.body === undefined ? '' : str(c.body, 16 * 1024);
+        const res = method === null || path === null || auth === null || body === null
+          ? { status: 400, body: { error: 'malformed admin request' } }
+          : o.admin({ method, path, auth, body });
         sendTo(ws, { c: 'adminRes', id: c.id, status: res.status, body: res.body });
       }
-    },
-    close: (ws) => {
-      const id = ws.getUserData().id;
-      relays.delete(id);
-      o.voters.dropRelay(id);
-      o.onRelaysChanged();
-    },
-  });
+  }
 
   const readBody = (res: uWS.HttpResponse, cb: (body: string) => void) => {
     let chunks: Buffer[] = [];

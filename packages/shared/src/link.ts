@@ -109,6 +109,28 @@ export function isControlText(text: string): boolean {
   return text.startsWith('{"c":');
 }
 
+const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+const TIERS = new Set([0, 70, 90, 100]);
+
+/** Every field a relay acts on is present and of the right type (a malformed message is dropped, never thrown on). */
+export function validSimControl(c: LinkControl): c is SimControl {
+  const m = c as Record<string, unknown>;
+  switch (c.c) {
+    case 'policy':
+      return TIERS.has(m.tier as number) && num(m.frameHz) && typeof m.alwaysOn === 'boolean' && num(m.sampleQuota) && num(m.capacity);
+    case 'welcome':
+      return typeof m.ev === 'object' && m.ev !== null && typeof (m.ev as { t?: unknown }).t === 'string';
+    case 'bans':
+      return Array.isArray(m.cidrs) && m.cidrs.every((x) => typeof x === 'string');
+    case 'resetFlags':
+      return true;
+    case 'adminRes':
+      return num(m.id) && num(m.status) && (m.status as number) >= 100 && (m.status as number) < 600;
+    default:
+      return false;
+  }
+}
+
 export function parseControl(text: string): LinkControl | null {
   if (!isControlText(text)) return null;
   try {

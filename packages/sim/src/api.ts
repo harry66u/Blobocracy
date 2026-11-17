@@ -1,7 +1,7 @@
 import { CLIP_ID_RE, deathSentence, levelTitle, progressOf, trackId, trackOf, type Level } from '@blobocracy/shared';
 import type uWS from 'uWebSockets.js';
 import { PENDING_WAIT_MS, type History } from './history';
-import { clipMeta, type ClipRow, type RunRow, type Store } from './store';
+import { clipMeta, type ClipRow, type RunRow, type Store, type Summary } from './store';
 
 /**
  * The public read API (spec §12 pages), served by the sim's internal HTTP port; edges proxy
@@ -33,6 +33,36 @@ export interface ApiDeps {
   counter: () => { deaths: number; run: number; record: { progress: number; run: number } | null; online: number };
   /** Chart points at most (runs are bucketed past this). */
   maxPoints?: number;
+  /**
+   * History reads at once (default 2) and waiting (default 32); past that a request is refused
+   * with a 503 instead of piling up. The sim's thread and its database connections are shared
+   * with the game, so anonymous page views must never be able to queue unbounded work (C1).
+   */
+  reads?: { concurrency?: number; queue?: number };
+  /** How long one track's summary (the heaviest query) is reused (default 5 s). */
+  summaryTtlMs?: number;
+  now?: () => number;
+}
+
+class Busy extends Error {}
+
+/** Runs at most `concurrency` tasks at once with at most `queue` waiting; beyond that, throws Busy. */
+export function limiter(concurrency: number, queue: number) {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (running < concurrency) running++;
+    else {
+      if (waiting.length >= queue) throw new Busy('busy');
+      await new Promise<void>((r) => waiting.push(r)); // the slot is handed over by the task that frees it
+    }
+    try {
+      return await fn();
+    } finally {
+      const next = waiting.shift();
+      if (next) next(); else running--;
+    }
+  };
 }
 
 export const PAGE_SIZE = 25;
@@ -65,11 +95,35 @@ export function clipTitle(c: Pick<ClipRow, 'kind' | 'run' | 'progress'>): string
 
 /** A clip still being made after the wait: try again shortly (never cached, so the edge asks again). */
 const MAKING = (): ApiResponse => ({ status: 503, type: 'application/json', body: JSON.stringify({ error: 'This clip is still being made.', making: true }), cache: 'no-store' });
+/** A clip that was being made when the sim restarted: gone for good, said kindly (cached like a 404). */
+const LOST = (): ApiResponse => ({
+  status: 410, type: 'application/json', cache: 'public, max-age=300',
+  body: JSON.stringify({ error: "This clip didn't make it: the blob restarted while it was being made.", lost: true }),
+});
 /** The longest the API holds one request for a clip being made; past it the client retries. */
 const MAX_HOLD_MS = 10_000;
 
 export function createApi(d: ApiDeps) {
   const maxPoints = d.maxPoints ?? 2400;
+  const now = d.now ?? Date.now;
+  const limit = limiter(d.reads?.concurrency ?? 2, d.reads?.queue ?? 32);
+  const summaries = new Map<number, { at: number; p: Promise<Summary> }>();
+  /** The store's reads, a few at a time; the summary shared per track for a few seconds. */
+  const reads = {
+    getClip: (id: string) => limit(() => d.store.getClip(id)),
+    loadWorld: (track: number) => limit(() => d.store.loadWorld(track)),
+    hallOfFame: () => limit(() => d.store.hallOfFame()),
+    listRuns: (q: Parameters<Store['listRuns']>[0]) => limit(() => d.store.listRuns(q)),
+    summary: (track: number, zones: number): Promise<Summary> => {
+      const hit = summaries.get(track);
+      if (hit && now() - hit.at < (d.summaryTtlMs ?? 5000)) return hit.p;
+      const p = limit(() => d.store.summary(track, maxPoints, zones));
+      const e = { at: now(), p };
+      summaries.set(track, e);
+      p.catch(() => { if (summaries.get(track) === e) summaries.delete(track); });
+      return p;
+    },
+  };
   const levels = d.levels?.length ? d.levels : [d.level];
   const cur = (): CurrentLevel => d.current?.() ?? { level: d.level, name: d.levelName, encore: false };
   const curTrack = () => { const c = cur(); return trackId(c.level.id, c.encore); };
@@ -91,12 +145,12 @@ export function createApi(d: ApiDeps) {
   async function countersOf(track: number) {
     const c = d.counter();
     if (track === curTrack()) return c;
-    const w = await d.store.loadWorld(track);
+    const w = await reads.loadWorld(track);
     return { deaths: w?.deaths ?? 0, run: (w?.deaths ?? 0) + 1, record: w?.record ? { progress: w.record.progress, run: w.record.run } : null, online: c.online };
   }
 
   async function clip(id: string): Promise<ClipRow | null | 'making'> {
-    const c = await d.store.getClip(id);
+    const c = await reads.getClip(id);
     if (c) return c;
     // made right now (reserved at the death or the win, saved when the run resets or the celebration ends): wait for it
     const making = d.history?.whenMade(id);
@@ -111,7 +165,7 @@ export function createApi(d: ApiDeps) {
       return json(200, { ...c, levelId: now.level.id, encore: now.encore }, 'public, max-age=5');
     }
     if (path === '/api/levels') {
-      const [hall] = await Promise.all([d.store.hallOfFame()]);
+      const hall = await reads.hallOfFame();
       const beaten = new Set(hall.map((h) => h.levelId));
       const now = curTrack();
       const curIdx = levels.findIndex((l) => l.id === cur().level.id);
@@ -127,7 +181,7 @@ export function createApi(d: ApiDeps) {
     if (path === '/api/summary') {
       const t = trackParam(q.get('level'));
       const L = t.level;
-      const [s, c] = await Promise.all([d.store.summary(t.track, maxPoints, L.zones.length), countersOf(t.track)]);
+      const [s, c] = await Promise.all([reads.summary(t.track, L.zones.length), countersOf(t.track)]);
       return json(200, {
         levelId: L.id, track: t.track, encore: t.encore, current: t.track === curTrack(), levelName: nameOf(L, t.encore), ...c, attempts: s.attempts,
         zones: L.zones.map((z) => ({ index: z.index, name: z.name, sky: z.sky, start: progressOf(L, z.startX) })),
@@ -139,11 +193,11 @@ export function createApi(d: ApiDeps) {
       const pageSize = intParam(q.get('size'), PAGE_SIZE, 1, 100);
       const best = truthy(q.get('best'));
       const t = trackParam(q.get('level'));
-      const [r, c] = await Promise.all([d.store.listRuns({ levelId: t.track, page, pageSize, best }), countersOf(t.track)]);
+      const [r, c] = await Promise.all([reads.listRuns({ levelId: t.track, page, pageSize, best }), countersOf(t.track)]);
       return json(200, { track: t.track, page: r.page, pages: r.pages, pageSize: r.pageSize, total: r.total, best, record: c.record, runs: r.runs.map(runJson) }, 'public, max-age=5');
     }
     if (path === '/api/hall') {
-      const rows = await d.store.hallOfFame();
+      const rows = await reads.hallOfFame();
       const c = d.counter();
       const now = cur();
       const entries = rows.map((h) => {
@@ -168,6 +222,7 @@ export function createApi(d: ApiDeps) {
       const c = await clip(id);
       if (c === 'making') return MAKING();
       if (!c) return notFound();
+      if (c.replay.length === 0) return LOST();
       if (m[2] === '/meta') {
         const description = c.kind === 'win'
           ? `Run ${c.run.toLocaleString('en-US')} made it all the way after ${c.deaths.toLocaleString('en-US')} deaths. Everyone online steered one blob.`
@@ -186,7 +241,7 @@ export function createApi(d: ApiDeps) {
     try {
       return await route(path.replace(/\/+$/, '') || '/', new URLSearchParams(query));
     } catch (e) {
-      console.warn(`[api] ${path}: ${e instanceof Error ? e.message : String(e)}`);
+      if (!(e instanceof Busy)) console.warn(`[api] ${path}: ${e instanceof Error ? e.message : String(e)}`);
       return json(503, { error: 'The history book is catching its breath. Try again in a moment.' });
     }
   };
