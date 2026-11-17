@@ -4,7 +4,8 @@
 import type { Layout } from '../layout.ts';
 import { makeCanvas } from './background.ts';
 import { CREAM, CREAM_BODY, CREAM_HI, CREAM_SHADE, HAZARD, INK } from './palette.ts';
-import { TILE_CEIL_SPIKE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE, type SceneLevel } from './scene.ts';
+import type { SceneLevel } from './scene.ts';
+import { TILE_CEIL_SPIKE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE } from './tiles.ts';
 
 export const CHUNK_TILES = 32;
 /** Overlap drawn on each side of a chunk so neighbours cover each other's cut edges. */

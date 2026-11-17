@@ -4,15 +4,14 @@ import type { Layout } from '../layout.ts';
 
 export type Sky = 'blue' | 'sunset' | 'purple';
 
-/** Tile codes: 0 empty, 1 solid, 2 one-way platform, 3 floor spike (points up), 4 ceiling spike (points down). */
-export const TILE_EMPTY = 0;
-export const TILE_SOLID = 1;
-export const TILE_ONEWAY = 2;
-export const TILE_SPIKE = 3;
-export const TILE_CEIL_SPIKE = 4;
+export { TILE_CEIL_SPIKE, TILE_EMPTY, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE } from './tiles.ts';
 
 export interface SceneZone { index: number; name: string; sky: Sky; startX: number; endX: number }
 
+/**
+ * Keep the same SceneLevel object for the lifetime of a level: the renderer caches
+ * pre-rendered chunks per object identity and rebuilds them when it changes.
+ */
 export interface SceneLevel {
   width: number;
   height: number;

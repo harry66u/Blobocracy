@@ -90,6 +90,14 @@ describe('World', () => {
     expect(w.record).toEqual({ progress: 0.9, run: 7 });
   });
 
+  test('dying near a tiny record is not a near miss', () => {
+    const w = new World(LEVEL, { deaths: 0, record: { progress: 0.05, run: 1 } });
+    const events = runUntil(w, RIGHT, (e) => e.t === 'death');
+    const death = events.find((e) => e.t === 'death') as Extract<ServerEvent, { t: 'death' }>;
+    expect(death.progress).toBeGreaterThan(0.05);
+    expect(death.nearRecord).toBe(false);
+  });
+
   test('constructed with prior deaths it continues the run count', () => {
     const w = new World(LEVEL, { deaths: 41, record: { progress: 0.5, run: 12 } });
     expect(w.run).toBe(42);

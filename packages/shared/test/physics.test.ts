@@ -7,22 +7,24 @@ import { PHYS } from '../src/constants';
 /** A one-room level; `bottom` rows sit at the bottom of the 18-row room, empty rows above. */
 function makeLevel(bottom: string[]): Level {
   const w = bottom[0]!.length;
-  const top = Array.from({ length: 18 - bottom.length }, () => '.'.repeat(w));
-  return parseLevel(1, 1, [{ name: 'Test', sky: 'blue', rooms: [[...top, ...bottom]] }]);
+  // Like real levels, keep the action above the pit line: 3 empty rows under the content.
+  const top = Array.from({ length: 15 - bottom.length }, () => '.'.repeat(w));
+  const under = Array.from({ length: 3 }, () => '.'.repeat(w));
+  return parseLevel(1, 1, [{ name: 'Test', sky: 'blue', rooms: [[...top, ...bottom, ...under]] }]);
 }
 
 const IDLE: Control = { move: 0, jumpHeld: false };
 const RIGHT: Control = { move: 1, jumpHeld: false };
 const JUMP: Control = { move: 0, jumpHeld: true };
 
-/** Ground top at y = 15, so a standing body has y = 14.4. */
+/** Ground top at y = 12, so a standing body has y = 11.4. */
 const FLAT = makeLevel([
   '.@..........................G.',
   '##############################',
   '##############################',
   '##############################',
 ]);
-const STAND_Y = 15 - PHYS.halfH;
+const STAND_Y = 12 - PHYS.halfH;
 
 function run(b: Body, level: Level, steps: number, c: Control | ((i: number, b: Body) => Control)) {
   const causes: (Cause | null)[] = [];
@@ -132,6 +134,15 @@ describe('jumping', () => {
 
   test('a tiny hop stays under 1.2 tiles so low ceilings are survivable', () => {
     expect(apexOf((i) => (i < 2 ? JUMP : IDLE))).toBeLessThan(1.2);
+  });
+
+  test('a fresh crowd press jumps again even while jump is still held', () => {
+    const b = createBody(FLAT);
+    run(b, FLAT, 120, JUMP);
+    expect(b.grounded).toBe(true);
+    stepBody(b, { move: 0, jumpHeld: true, jumpPressed: true }, FLAT);
+    run(b, FLAT, 10, JUMP);
+    expect(b.y).toBeLessThan(STAND_Y - 0.5);
   });
 
   test('holding jump through a landing does not jump again', () => {
@@ -244,7 +255,7 @@ describe('one-way platforms', () => {
     '.@.........',
     '###########',
   ]);
-  const PLATFORM_Y = 14 - PHYS.halfH;
+  const PLATFORM_Y = 11 - PHYS.halfH;
 
   test('jumping up through one from below passes, then landing on it holds', () => {
     const b = createBody(level);
@@ -272,7 +283,7 @@ describe('one-way platforms', () => {
   test('does not block sideways movement', () => {
     const b = createBody(level);
     b.x = 1;
-    b.y = 14.6; // overlaps the platform row
+    b.y = 11.6; // overlaps the platform row
     b.vx = PHYS.runSpeed;
     b.grounded = false;
     run(b, level, 5, RIGHT);
@@ -330,6 +341,22 @@ describe('deaths', () => {
     const first = causes.findIndex((c) => c !== null);
     expect(causes[first]).toBe('pit');
     expect(first).toBeGreaterThan(0);
+  });
+
+  // The death freeze must show the blob in the pit, so a pit kills while it is still on screen.
+  test('a pit kills while the blob is still visible, 2.5 rows above the bottom', () => {
+    const level = makeLevel([
+      '.@.......G',
+      '....######',
+    ]);
+    const b = createBody(level);
+    b.x = 1.5;
+    b.grounded = false;
+    for (let i = 0; i < 400; i++) {
+      if (stepBody(b, IDLE, level) === 'pit') break;
+    }
+    expect(b.y).toBeLessThanOrEqual(level.height - 2.5 + 0.5);
+    expect(b.y).toBeGreaterThan(level.height - 2.5);
   });
 });
 

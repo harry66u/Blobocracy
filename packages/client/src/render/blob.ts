@@ -2,8 +2,9 @@
 // face normally, effort face during a tug of war, panic face (worried brows, "o" mouth,
 // sweat, alarm lines) when a hazard or gap is close ahead, sleeping when paused, and a
 // flattened pancake with X eyes when dead. Also owns jump/landing dust and the arc trail.
-import { BLOB, BLOB_SHADE, CREAM, CREAM_HI, INK, SWEAT } from './palette.ts';
-import { TILE_CEIL_SPIKE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE, type SceneBlob, type SceneLevel } from './scene.ts';
+import { BLOB, BLOB_SHADE, CREAM, CREAM_HI, FONT_TEXT, INK, SWEAT } from './palette.ts';
+import type { SceneBlob, SceneLevel } from './scene.ts';
+import { TILE_CEIL_SPIKE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE } from './tiles.ts';
 
 /** Hitbox half height in tiles (hitbox is 1.1 × 1.2). */
 export const HALF_H = 0.6;
@@ -246,6 +247,17 @@ export class BlobView {
         ctx.stroke();
         continue;
       }
+      if (efforting && strain > 0.7) {
+        // squeezed shut with effort: > <
+        ctx.lineWidth = T * 0.075;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ex + d * erx * 0.55, eyeY - ery * 0.45);
+        ctx.lineTo(ex - d * erx * 0.45, eyeY);
+        ctx.lineTo(ex + d * erx * 0.55, eyeY + ery * 0.45);
+        ctx.stroke();
+        continue;
+      }
       const ey = efforting ? eyeY + ery * 0.12 : eyeY;
       const eRy = efforting ? ery * 0.72 : ery;
       ctx.fillStyle = '#FFFFFF';
@@ -283,7 +295,7 @@ export class BlobView {
         ctx.moveTo(bx - erx * 0.8, byy + bh * (d < 0 ? 0.07 : -0.06));
         ctx.quadraticCurveTo(bx, byy - bh * 0.1, bx + erx * 0.8, byy + bh * (d < 0 ? -0.06 : 0.07));
         ctx.stroke();
-      } else if (efforting) {
+      } else if (efforting && strain <= 0.7) {
         ctx.lineWidth = T * 0.075;
         ctx.beginPath();
         ctx.moveTo(bx - d * erx * 0.85, byy + bh * 0.0);
@@ -315,16 +327,18 @@ export class BlobView {
       ctx.ellipse(0, bh * 0.42, bw * 0.07, bh * 0.05 + bh * 0.02 * Math.sin(timeS * 1.6), 0, 0, Math.PI * 2);
       ctx.fill();
     } else if (efforting) {
-      const mw = bw * 0.42, mh = bh * 0.16;
+      const mw = bw * 0.56, mh = bh * 0.22;
       ctx.fillStyle = '#FFFFFF';
       ctx.lineWidth = T * 0.055;
       ctx.beginPath();
-      ctx.roundRect(-mw / 2, bh * 0.36, mw, mh, mh * 0.45);
+      ctx.roundRect(-mw / 2, bh * 0.3, mw, mh, mh * 0.45);
       ctx.fill();
       ctx.stroke();
+      ctx.lineWidth = T * 0.04;
       ctx.beginPath();
-      ctx.moveTo(-mw / 2 + mh * 0.2, bh * 0.36 + mh / 2);
-      ctx.lineTo(mw / 2 - mh * 0.2, bh * 0.36 + mh / 2);
+      ctx.moveTo(-mw / 2 + mh * 0.15, bh * 0.3 + mh / 2);
+      ctx.lineTo(mw / 2 - mh * 0.15, bh * 0.3 + mh / 2);
+      for (const f of [-0.17, 0.17]) { ctx.moveTo(f * mw, bh * 0.3 + mh * 0.12); ctx.lineTo(f * mw, bh * 0.3 + mh * 0.88); }
       ctx.stroke();
     } else {
       ctx.lineWidth = T * 0.07;
@@ -434,7 +448,7 @@ function drop(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, ro
   ctx.closePath();
   ctx.fillStyle = SWEAT;
   ctx.fill();
-  ctx.lineWidth = 2.2 / s * (s > 0 ? Math.min(1, s * 1.2) : 1);
+  ctx.lineWidth = 2.2 / s;
   ctx.strokeStyle = INK;
   ctx.stroke();
   ctx.restore();
@@ -464,12 +478,12 @@ function drawZzz(ctx: CanvasRenderingContext2D, T: number, x: number, y: number,
   ctx.lineJoin = 'round';
   for (let i = 0; i < 3; i++) {
     const ph = ((timeS * 0.45 + i / 3) % 1);
-    const size = T * (0.32 + ph * 0.4);
-    const px = x + ph * T * 0.9 + Math.sin(ph * 6.28 + i) * T * 0.12;
-    const py = y - ph * T * 1.6;
+    const size = T * (0.5 + ph * 0.5);
+    const px = x + ph * T * 1.1 + Math.sin(ph * 6.28 + i) * T * 0.14;
+    const py = y - ph * T * 1.5;
     ctx.globalAlpha = Math.min(1, ph * 5) * Math.min(1, (1 - ph) * 3);
-    ctx.font = `${size.toFixed(1)}px 'Bagel Fat One', sans-serif`;
-    ctx.lineWidth = Math.max(2, size * 0.16);
+    ctx.font = `800 ${size.toFixed(1)}px ${FONT_TEXT}`;
+    ctx.lineWidth = Math.max(2.5, size * 0.17);
     ctx.strokeStyle = INK;
     ctx.strokeText('z', px, py);
     ctx.fillStyle = CREAM_HI;

@@ -21,7 +21,8 @@ export function predict(frame: StateFrame, level: Level, aheadS: number): Body {
   const b = bodyFromFrame(frame);
   if (frame.phase !== 'running') return b;
   const steps = Math.floor(Math.min(Math.max(aheadS, 0), MAX_AHEAD_S) / DT + 1e-9);
-  const control = { move: frame.pull * (1 - BLEND.strainSlow * frame.strain), jumpHeld: frame.jumpHeld };
+  const curved = Math.sign(frame.pull) * Math.pow(Math.abs(frame.pull), BLEND.moveCurve);
+  const control = { move: curved * (1 - BLEND.strainSlow * frame.strain), jumpHeld: frame.jumpHeld };
   for (let i = 0; i < steps; i++) {
     if (stepBody(b, control, level)) break;
   }

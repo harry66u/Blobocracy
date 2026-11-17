@@ -10,11 +10,54 @@ type ColorField = (typeof COLOR_FIELDS)[number];
 const NUM = COLOR_FIELDS.length * 4 + 2; // + stars + cloudAlpha
 const TRANSITION_S = 2;
 
+// Colors are blended in HSL so the cross-fade goes through dusky pinks and purples
+// instead of the muddy grey a straight RGB mix of blue and orange gives.
+function rgbToHsl(r: number, g: number, b: number, out: number[]): void {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h *= 60;
+  }
+  out[0] = h; out[1] = s; out[2] = l;
+}
+
+function hslToRgbString(h: number, s: number, l: number, a: number): string {
+  h = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  return rgba(Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255), a);
+}
+
+/** Hue step from h1 to h2 that never sweeps through green (around 120°). */
+function hueDelta(h1: number, h2: number): number {
+  const up = (((h2 - h1) % 360) + 360) % 360, down = up - 360;
+  const crosses = (from: number, d: number) => {
+    const steps = 24;
+    for (let i = 1; i < steps; i++) {
+      const h = (((from + (d * i) / steps) % 360) + 360) % 360;
+      if (h > 95 && h < 150) return true;
+    }
+    return false;
+  };
+  const upBad = crosses(h1, up), downBad = crosses(h1, down);
+  if (upBad !== downBad) return upBad ? down : up;
+  return Math.abs(up) <= Math.abs(down) ? up : down;
+}
+
 function encode(p: SkyPalette, out: Float64Array): Float64Array {
   const tmp = [0, 0, 0, 1];
+  const hsl = [0, 0, 0];
   COLOR_FIELDS.forEach((f, i) => {
     parseColor(p[f], tmp);
-    out[i * 4] = tmp[0]!; out[i * 4 + 1] = tmp[1]!; out[i * 4 + 2] = tmp[2]!; out[i * 4 + 3] = tmp[3]!;
+    rgbToHsl(tmp[0]!, tmp[1]!, tmp[2]!, hsl);
+    out[i * 4] = hsl[0]!; out[i * 4 + 1] = hsl[1]!; out[i * 4 + 2] = hsl[2]!; out[i * 4 + 3] = tmp[3]!;
   });
   out[NUM - 2] = p.stars;
   out[NUM - 1] = p.cloudAlpha;
@@ -71,6 +114,7 @@ export class Background {
     }
     if (sky !== this.target) {
       this.from.set(this.cur);
+      for (let i = 0; i < COLOR_FIELDS.length; i++) this.from[i * 4] = ((this.from[i * 4]! % 360) + 360) % 360;
       this.to.set(ENCODED[sky]);
       this.target = sky;
       this.t0 = timeS;
@@ -79,7 +123,19 @@ export class Background {
     if (this.settled) return;
     const t = Math.min(1, Math.max(0, (timeS - this.t0) / TRANSITION_S));
     const k = smooth(t);
-    for (let i = 0; i < NUM; i++) this.cur[i] = this.from[i]! + (this.to[i]! - this.from[i]!) * k;
+    for (let i = 0; i < NUM; i++) {
+      const isHue = i < COLOR_FIELDS.length * 4 && i % 4 === 0;
+      let a = this.from[i]!, b = this.to[i]!;
+      if (isHue) {
+        // grey-ish colors carry no meaningful hue; borrow the other end's
+        if (this.from[i + 1]! < 0.05) a = b;
+        if (this.to[i + 1]! < 0.05) b = a;
+        this.cur[i] = a + hueDelta(a, b) * k;
+      } else this.cur[i] = a + (b - a) * k;
+    }
+    // soften saturation mid-fade so the in-between sky reads as dusk, not neon
+    const dip = 1 - 0.4 * Math.sin(Math.PI * k);
+    for (let i = 0; i < COLOR_FIELDS.length; i++) this.cur[i * 4 + 1]! *= dip;
     this.writePalette();
     if (t >= 1) this.settled = true;
   }
@@ -87,7 +143,7 @@ export class Background {
   private writePalette(): void {
     const c = this.cur;
     COLOR_FIELDS.forEach((f: ColorField, i) => {
-      this.pal[f] = rgba(c[i * 4]!, c[i * 4 + 1]!, c[i * 4 + 2]!, c[i * 4 + 3]!);
+      this.pal[f] = hslToRgbString(c[i * 4]!, c[i * 4 + 1]!, c[i * 4 + 2]!, c[i * 4 + 3]!);
     });
     this.pal.stars = c[NUM - 2]!;
     this.pal.cloudAlpha = c[NUM - 1]!;
@@ -186,7 +242,7 @@ export class Background {
     // [x fraction, y fraction, size] from the mockup's placements
     const defs = L.phone
       ? [[70 / 390, 250 / 844, 26 / 390], [300 / 390, 330 / 844, 20.8 / 390], [560 / 390, 190 / 844, 22 / 390]]
-      : [[230 / 1600, 230 / 900, 46 / 900], [980 / 1600, 170 / 900, 36.8 / 900], [1420 / 1600, 330 / 900, 32.2 / 900], [1900 / 1600, 260 / 900, 40 / 900]];
+      : [[230 / 1600, 230 / 900, 46 / 900], [980 / 1600, 205 / 900, 36.8 / 900], [1420 / 1600, 330 / 900, 32.2 / 900], [1900 / 1600, 260 / 900, 40 / 900]];
     const span = L.phone ? w * 2.1 : w * 1.45;
     ctx.globalAlpha = p.cloudAlpha;
     ctx.fillStyle = p.cloud;
@@ -220,7 +276,7 @@ export class Background {
     ctx.fillStyle = '#FFF3DC';
     const n = L.phone ? 6 : 12;
     for (let i = 0; i < n; i++) {
-      const x = rnd() * L.w, y = rnd() * L.groundY * 0.7, ph = rnd() * 6.28, sp = 1 + rnd() * 2;
+      const x = rnd() * L.w, y = L.groundY * (0.22 + rnd() * 0.45), ph = rnd() * 6.28, sp = 1 + rnd() * 2;
       const a = 0.5 + 0.5 * Math.sin(timeS * sp + ph);
       ctx.globalAlpha = this.pal.stars * a;
       const s = 2.2 + a * 1.4;

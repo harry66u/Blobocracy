@@ -1,9 +1,9 @@
-import { ACTIVE_WINDOW_S, SAMPLE_SLOTS, type VoteCounts } from '@blobocracy/shared';
+import { ACTIVE_WINDOW_S, BLEND, SAMPLE_SLOTS, type VoteCounts } from '@blobocracy/shared';
 
 const IN_LEFT = 1, IN_RIGHT = 2, IN_JUMP = 4;
 const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2;
 
-interface Voter { bits: number; changedAt: number; everPressed: boolean; slot: number }
+interface Voter { bits: number; changedAt: number; jumpAt: number; everPressed: boolean; slot: number }
 
 /**
  * Tracks every connected voter's input and decides who is "active".
@@ -19,7 +19,7 @@ export class Voters {
 
   join(id: number): void {
     if (this.voters.has(id)) return;
-    this.voters.set(id, { bits: 0, changedAt: -Infinity, everPressed: false, slot: -1 });
+    this.voters.set(id, { bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false, slot: -1 });
     this.unslotted.add(id);
     this.fillSlots();
   }
@@ -36,22 +36,26 @@ export class Voters {
   setInput(id: number, bits: number, nowS: number): void {
     const v = this.voters.get(id);
     if (!v || v.bits === bits) return;
+    if (bits & IN_JUMP && !(v.bits & IN_JUMP)) v.jumpAt = nowS;
     v.bits = bits & 7;
     v.changedAt = nowS;
     if (bits) v.everPressed = true;
   }
 
   counts(nowS: number): VoteCounts {
-    let left = 0, right = 0, jump = 0, active = 0;
+    let left = 0, right = 0, jump = 0, active = 0, fresh = 0;
     for (const v of this.voters.values()) {
       if (!this.isActive(v, nowS)) continue;
       active++;
       const l = v.bits & IN_LEFT, r = v.bits & IN_RIGHT;
       if (l && !r) left++;
       else if (r && !l) right++;
-      if (v.bits & IN_JUMP) jump++;
+      if (v.bits & IN_JUMP) {
+        jump++;
+        if (nowS - v.jumpAt <= BLEND.freshS) fresh++;
+      }
     }
-    return { left, right, jump, active };
+    return { left, right, jump, active, fresh };
   }
 
   sample(): { dots: Uint8Array; dotJump: Uint8Array } {

@@ -9,7 +9,7 @@ describe('Voters', () => {
     const v = new Voters();
     v.join(1);
     v.setInput(1, L | R, 0);
-    expect(v.counts(0)).toEqual({ left: 0, right: 0, jump: 0, active: 1 });
+    expect(v.counts(0)).toMatchObject({ left: 0, right: 0, jump: 0, active: 1 });
   });
 
   test('a voter idle with no buttons for over 3 s is not active', () => {
@@ -25,7 +25,7 @@ describe('Voters', () => {
     const v = new Voters();
     v.join(1);
     v.setInput(1, R, 0);
-    expect(v.counts(3.1)).toEqual({ left: 0, right: 1, jump: 0, active: 1 });
+    expect(v.counts(3.1)).toMatchObject({ left: 0, right: 1, jump: 0, active: 1 });
   });
 
   test('a voter who never pressed anything is not active', () => {
@@ -71,7 +71,7 @@ describe('Voters', () => {
     const v = new Voters();
     v.join(1); v.setInput(1, R, 0);
     v.leave(1);
-    expect(v.counts(0)).toEqual({ left: 0, right: 0, jump: 0, active: 0 });
+    expect(v.counts(0)).toMatchObject({ left: 0, right: 0, jump: 0, active: 0 });
     expect(v.size()).toBe(0);
   });
 
@@ -79,5 +79,17 @@ describe('Voters', () => {
     const v = new Voters();
     v.setInput(99, R, 0);
     expect(v.counts(0).active).toBe(0);
+  });
+
+  test('fresh counts voters whose jump press began in the last 0.25 s', () => {
+    const v = new Voters();
+    v.join(1); v.join(2); v.join(3);
+    v.setInput(1, R | J, 0);
+    v.setInput(2, R | J, 0.2);
+    v.setInput(3, R, 0.2);
+    expect(v.counts(0.22).fresh).toBe(2);
+    expect(v.counts(0.4).fresh).toBe(1);
+    v.setInput(2, R, 0.5); // release keeps it out of fresh
+    expect(v.counts(0.5).fresh).toBe(0);
   });
 });

@@ -21,6 +21,8 @@ const EPS = 1e-9;
 /** Floor spikes kill in their lower 60% and middle 70%; ceiling spikes are mirrored. */
 const SPIKE_INSET_X = 0.15;
 const SPIKE_DEPTH = 0.6;
+/** A pit kills once the body's center sinks this many rows above the level's bottom edge. */
+const PIT_DEATH_ROWS = 2.5;
 
 const solidAt = (level: Level, tx: number, ty: number) => tileAt(level, tx, ty) === T_SOLID;
 
@@ -129,7 +131,8 @@ function spikeHit(b: Body, level: Level): Cause | null {
  */
 export function stepBody(b: Body, c: Control, level: Level): Cause | null {
   // Jump input: a rising edge buffers a jump; it fires once the body can jump.
-  b.buffer = c.jumpHeld && !b.prevJumpHeld ? PHYS.bufferS : countDown(b.buffer);
+  const edge = (c.jumpHeld && !b.prevJumpHeld) || c.jumpPressed === true;
+  b.buffer = edge ? PHYS.bufferS : countDown(b.buffer);
   b.prevJumpHeld = c.jumpHeld;
   if (b.buffer > 0 && (b.grounded || b.coyote > 0)) {
     b.vy = -PHYS.jumpVelocity;
@@ -161,6 +164,7 @@ export function stepBody(b: Body, c: Control, level: Level): Cause | null {
 
   const spike = spikeHit(b, level);
   if (spike) return spike;
-  if (b.y - PHYS.halfH > level.height) return 'pit';
+  // Kill while the blob is still visible in the pit, so the death freeze shows it.
+  if (b.y > level.height - PIT_DEATH_ROWS) return 'pit';
   return null;
 }

@@ -2,7 +2,9 @@
 // Usage: npx tsx tools/screenshot.ts [virtualPlayers] [outDir]
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { chromium } from 'playwright';
+import { createRequire } from 'node:module';
+// Playwright is preinstalled globally; ESM imports don't search NODE_PATH, so require it.
+const { chromium } = createRequire(import.meta.url)('playwright') as typeof import('playwright');
 import { startServer } from '../packages/sim/src/server';
 
 const players = Number(process.argv[2] ?? 400);
@@ -48,3 +50,4 @@ try {
   vite.kill();
   await srv.stop();
 }
+process.exit(0);

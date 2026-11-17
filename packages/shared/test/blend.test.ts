@@ -30,14 +30,14 @@ describe('blend', () => {
   test('a crowd that partly agrees moves partly', () => {
     const out = blend(votes(0, 6, 0, 10), false);
     expect(out.pull).toBeCloseTo(0.6, 10);
-    expect(out.move).toBeCloseTo(0.6, 10);
+    expect(out.move).toBeCloseTo(Math.pow(0.6, BLEND.moveCurve), 10);
   });
 
   test('strain slows the blob', () => {
     const out = blend(votes(2, 6, 0, 10), false);
     expect(out.pull).toBeCloseTo(0.4, 10);
     expect(out.strain).toBeCloseTo(0.4, 10);
-    expect(out.move).toBeCloseTo(0.4 * (1 - BLEND.strainSlow * 0.4), 10);
+    expect(out.move).toBeCloseTo(Math.pow(0.4, BLEND.moveCurve) * (1 - BLEND.strainSlow * 0.4), 10);
   });
 
   test('nobody active means no pull, no pressure, no jump', () => {
@@ -68,5 +68,51 @@ describe('blend', () => {
     expect(right.pressure).toBe(1);
     expect(blend(votes(7, 0, 0, 3), false).pull).toBe(-1);
     expect(blend(votes(4, 4, 0, 2), false).strain).toBe(1);
+  });
+});
+
+describe('fresh jump bursts', () => {
+  const v = (fresh: number, jump: number, active: number) => ({ left: 0, right: active, jump, active, fresh });
+  test('a burst of fresh presses fires a jump even while jump is already held', () => {
+    const out = blend(v(3, 8, 10), true, false);
+    expect(out.jumpPressed).toBe(true);
+    expect(out.freshHigh).toBe(true);
+  });
+  test('the same burst fires only once', () => {
+    expect(blend(v(5, 8, 10), true, true).jumpPressed).toBe(false);
+  });
+  test('a burst hovering around the threshold does not fire again until it dies down', () => {
+    const first = blend(v(3, 8, 10), true, false);
+    expect(first.jumpPressed).toBe(true);
+    const wobble = blend(v(2, 8, 10), true, first.freshHigh);
+    expect(wobble.freshHigh).toBe(true);
+    const again = blend(v(3, 8, 10), true, wobble.freshHigh);
+    expect(again.jumpPressed).toBe(false);
+    const calm = blend(v(1, 8, 10), true, again.freshHigh);
+    expect(calm.freshHigh).toBe(false);
+    expect(blend(v(3, 8, 10), true, calm.freshHigh).jumpPressed).toBe(true);
+  });
+
+  test('a small trickle of fresh presses does not fire', () => {
+    expect(blend(v(2, 8, 10), true, false).jumpPressed).toBe(false);
+  });
+  test('without fresh counts nothing fires', () => {
+    expect(blend({ left: 0, right: 1, jump: 1, active: 1 }, true).jumpPressed).toBe(false);
+  });
+});
+
+describe('movement response curve', () => {
+  // A mostly-agreeing crowd should feel decisive: speed = sign(pull) * |pull|^0.6.
+  test('half the crowd agreeing moves at about two thirds speed', () => {
+    const out = blend({ left: 0, right: 5, jump: 0, active: 10 }, false);
+    expect(out.pull).toBeCloseTo(0.5);
+    expect(out.move).toBeCloseTo(Math.pow(0.5, 0.6), 5);
+  });
+  test('the curve is symmetric for left', () => {
+    expect(blend({ left: 5, right: 0, jump: 0, active: 10 }, false).move).toBeCloseTo(-Math.pow(0.5, 0.6), 5);
+  });
+  test('a lone player and a dead split are unchanged', () => {
+    expect(blend({ left: 0, right: 1, jump: 0, active: 1 }, false).move).toBe(1);
+    expect(blend({ left: 5, right: 5, jump: 0, active: 10 }, false).move).toBeCloseTo(0, 9);
   });
 });

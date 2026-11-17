@@ -29,4 +29,8 @@ export const BLEND = {
   jumpOn: 0.3,
   jumpOff: 0.15,
   strainSlow: 0.2,
+  /** move = sign(pull)·|pull|^moveCurve, so a clear majority moves briskly. */
+  moveCurve: 0.6,
+  /** A jump press counts as part of a fresh burst for this long. */
+  freshS: 0.25,
 } as const;

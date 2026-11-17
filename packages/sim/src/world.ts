@@ -8,7 +8,10 @@ export interface WorldInit { deaths: number; record: { progress: number; run: nu
 export type Phase = 'running' | 'dying' | 'paused';
 
 const DYING_TICKS = Math.round((DEATH_FREEZE_S + DEATH_HOLD_S) * TICK_HZ);
+const IDLE_BLEND: BlendOut = { move: 0, jumpHeld: false, jumpPressed: false, freshHigh: false, pull: 0, pressure: 0, strain: 0 };
 const NEAR_RECORD = 0.05;
+/** Below this, a record is too small for dying near it to be a "so close" moment. */
+const MIN_RECORD_FOR_NEAR_MISS = 0.1;
 
 /**
  * The one shared world: a single blob, one run at a time, one life.
@@ -23,7 +26,7 @@ export class World {
   deaths: number;
   phase: Phase = 'running';
   body: Body;
-  lastBlend: BlendOut = { move: 0, jumpHeld: false, pull: 0, pressure: 0, strain: 0 };
+  lastBlend: BlendOut = { ...IDLE_BLEND };
   record: { progress: number; run: number } | null;
   maxProgress = 0;
   zone = 0;
@@ -48,13 +51,13 @@ export class World {
 
     if (votes.active === 0) {
       this.phase = 'paused';
-      this.lastBlend = { move: 0, jumpHeld: false, pull: 0, pressure: 0, strain: 0 };
+      this.lastBlend = { ...IDLE_BLEND };
       return events;
     }
     this.phase = 'running';
     this.runTick++;
 
-    this.lastBlend = blend(votes, this.lastBlend.jumpHeld);
+    this.lastBlend = blend(votes, this.lastBlend.jumpHeld, this.lastBlend.freshHigh);
     const cause = stepBody(this.body, this.lastBlend, this.level);
 
     const progress = progressOf(this.level, this.body.x);
@@ -78,7 +81,8 @@ export class World {
 
   private die(cause: NonNullable<ReturnType<typeof stepBody>>, events: ServerEvent[]): void {
     const progress = this.maxProgress;
-    const nearRecord = this.record !== null && progress >= this.record.progress - NEAR_RECORD;
+    const nearRecord = this.record !== null && this.record.progress >= MIN_RECORD_FOR_NEAR_MISS
+      && progress >= this.record.progress - NEAR_RECORD;
     this.deaths++;
     events.push({ t: 'death', run: this.run, cause, progress, deaths: this.deaths, zone: this.zone, nearRecord });
     if (this.record === null || progress > this.record.progress) {
@@ -96,7 +100,7 @@ export class World {
     this.zone = 0;
     this.runTick = 0;
     this.phase = 'running';
-    this.lastBlend = { move: 0, jumpHeld: false, pull: 0, pressure: 0, strain: 0 };
+    this.lastBlend = { ...IDLE_BLEND };
     events.push({ t: 'reset', run: this.run });
   }
 }
