@@ -30,6 +30,23 @@ npm run dev -- --bots 300
 
 Any number works. Try 5, 30 and 300 to feel how blending changes with crowd size. The bots are a mixed crowd: about 70% helpers who push right and jump at obstacles after a human-like delay, 20% chaos who mash random buttons, and 10% who pressed once and wandered off.
 
+## Run it the way production does (sim + two relays)
+
+```bash
+npm run dev:split
+```
+
+This starts the simulation, two edge relays and two browser addresses: http://localhost:5173 (relay A) and http://localhost:5174 (relay B). Open one of each and you are steering the same blob through different relays. Pages solve a small proof of work before joining, as they will online. Stop with Ctrl+C.
+
+## Real bot connections and the load test
+
+```bash
+npm run bots -- --count 500 --profile mixed --url ws://localhost:8080,ws://localhost:8082
+npm run loadtest -- --count 5000
+```
+
+`bots` connects real sockets to running relays (profiles: follower, random, idle, spammer, farm, perfect-timing, mixed; start the relays with `TRUST_TEST_IP_HEADER=1` so each bot gets its own fake address). `loadtest` starts everything itself, reports frames per second, latency, relay CPU and memory, and which bot defenses fired, and saves the numbers to `tools/out/`.
+
 ## Tests
 
 ```bash
