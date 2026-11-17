@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Blobocracy mockup board</title>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Bagel+Fat+One&family=Atkinson+Hyperlegible+Next:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: 'Atkinson Hyperlegible Next'; }
+  .board { width: 1960px; padding: 48px 56px 56px; box-sizing: border-box; }
+  .minimal { background: #E6DFD2; color: #000; }
+  .cartoon { background: #2A1B3D; color: #FFF1D6; }
+  h1 { margin: 0 0 6px; font-size: 44px; font-weight: 400; }
+  .minimal h1 { font-family: 'Dela Gothic One'; }
+  .cartoon h1 { font-family: 'Bagel Fat One'; }
+  p { margin: 0 0 32px; font-size: 19px; opacity: .8; max-width: 70ch; }
+  .row { display: flex; gap: 24px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { font-size: 15px; font-weight: 700; margin-top: 10px; opacity: .75; }
+  img { display: block; border-radius: 10px; }
+  .cartoon img { box-shadow: 0 6px 0 #120A1E; }
+  .minimal img { outline: 2px solid #000; border-radius: 0; }
+  .desk img { width: 1200px; }
+  .phone img { width: 312px; border-radius: 26px; }
+  .minimal .phone img { border-radius: 0; }
+  .strip { display: flex; gap: 24px; margin-top: 28px; }
+  .strip img { width: 600px; }
+</style></head>
+<body><div id="b"></div>
+<script>
+const t = new URLSearchParams(location.search).get('theme');
+const pre = t === 'minimal' ? 'minimal' : 'cartoon';
+const title = t === 'minimal' ? 'A. Minimal' : 'B. Playful cartoon';
+const blurb = t === 'minimal'
+  ? 'Warm paper, solid black geometry, and one orange-red blob. Your own dot is the only other spot of colour, a little piece of the blob.'
+  : 'Cream platforms with thick plum outlines, a grumpy hot-pink crusher, and a sky that changes colour as the world gets further: blue, then sunset, then deep purple.';
+let html = `<div class="board ${pre}"><h1>${title}</h1><p>${blurb}</p><div class="row">
+  <figure class="desk"><img src="${pre}-desktop.png"><figcaption>Desktop, mid-jump over spikes${t === 'minimal' ? '' : ' (sunset zone)'}</figcaption></figure>
+  <figure class="phone"><img src="${pre}-phone.png"><figcaption>Phone, playing</figcaption></figure>
+  <figure class="phone"><img src="${pre}-phone-death.png"><figcaption>Phone, died near the record</figcaption></figure>
+</div>`;
+if (t !== 'minimal') html += `<div class="strip"><figure><img src="cartoon-zone1.png"><figcaption>Zones 1 and 2: blue</figcaption></figure><figure><img src="cartoon-desktop.png"><figcaption>Zones 3 and 4: sunset</figcaption></figure><figure><img src="cartoon-zone5.png"><figcaption>Zones 5 and 6: deep purple</figcaption></figure></div>`;
+html += `</div>`;
+document.getElementById('b').innerHTML = html;
+Promise.all([document.fonts.ready, ...[...document.images].map(i => i.decode())]).then(() => document.body.dataset.ready = 1);
+</script></body></html>

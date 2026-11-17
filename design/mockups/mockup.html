@@ -1,0 +1,553 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Blobocracy mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Bagel+Fat+One&family=Atkinson+Hyperlegible+Next:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ---------------------------------------------------------------------------
+// Blobocracy static mockup renderer. URL params:
+//   theme=minimal|cartoon  view=desktop|phone  moment=play|death  zone=1|3|5
+// Everything is drawn in world "tiles" and projected to screen pixels so the
+// same level slice can be shown in both styles and both aspect ratios.
+// ---------------------------------------------------------------------------
+const P = new URLSearchParams(location.search);
+const theme = P.get('theme') || 'cartoon';
+const view = P.get('view') || 'desktop';
+const moment = P.get('moment') || 'play';
+const zone = +(P.get('zone') || 3);
+const W = view === 'phone' ? 390 : 1600;
+const H = view === 'phone' ? 844 : 900;
+
+// ---- seeded rng ----------------------------------------------------------
+let seed = 1337;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+
+// ---- palettes --------------------------------------------------------------
+const SKIES = {
+  1: { top: '#5FBFFF', bot: '#CFEFFF', hillFar: '#A9DDF7', hillNear: '#86CBEF', sun: '#FFF6C9', cloud: '#FFFFFF', hud: '#2A1B3D', hudSoft: 'rgba(42,27,61,.72)' },
+  3: { top: '#FF7E5F', bot: '#FFD49A', hillFar: '#F8A877', hillNear: '#EC8662', sun: '#FFF0B8', cloud: '#FFE7CF', hud: '#2A1B3D', hudSoft: 'rgba(42,27,61,.72)' },
+  5: { top: '#2B1655', bot: '#8A4DB3', hillFar: '#5E3592', hillNear: '#472476', sun: '#F4E9FF', cloud: '#B88DDA', hud: '#FFF3DC', hudSoft: 'rgba(255,243,220,.78)' },
+};
+const C = theme === 'minimal' ? {
+  paper: '#F2EDE3', ink: '#000000', faint: '#E5DED1', faint2: '#DAD2C3', blob: '#FF4A1C', blobDark: '#D93A12',
+  dot: '#8C857A', eyeW: '#FFFFFF', hud: '#000000', hudSoft: 'rgba(0,0,0,.62)', track: '#D9D1C2',
+  display: "'Dela Gothic One'", text: "'Atkinson Hyperlegible Next'",
+} : {
+  ink: '#2A1B3D', cream: '#FFF1D6', creamShade: '#F2D8AE', creamHi: '#FFFBF1', hazard: '#FF3B7A', hazardDark: '#D61F5C',
+  blob: '#FFD21F', blobShade: '#F2B300', dot: '#FFFFFF', eyeW: '#FFFFFF', track: '#FFF1D6',
+  display: "'Bagel Fat One'", text: "'Atkinson Hyperlegible Next'", sky: SKIES[zone],
+};
+if (theme === 'cartoon') { C.hud = C.sky.hud; C.hudSoft = C.sky.hudSoft; }
+
+// ---- camera -----------------------------------------------------------------
+const T = view === 'phone' ? 38 : 56;               // pixels per tile
+const groundY = view === 'phone' ? 604 : 660;       // screen y of world y = 0
+const hero = moment === 'death'
+  ? { x: 25.2, y: -1.15 }
+  : { x: 11.6, y: -3.05 };
+const camX = view === 'phone' ? hero.x - (moment === 'death' ? 5.1 : 3.4) : hero.x - 9.6;
+const sx = x => (x - camX) * T;
+const sy = y => groundY + y * T;
+
+// ---- level slice (world tiles, y up is negative, ground top = 0) ------------
+const solids = [
+  { x0: -30, x1: 14, y0: 0, y1: 40 },
+  { x0: 17, x1: 20, y0: -2.5, y1: -1.8, floating: true },
+  { x0: 20, x1: 36, y0: -1, y1: 40 },
+  { x0: 31, x1: 33.6, y0: -4.3, y1: -3.6, floating: true },
+  { x0: 36, x1: 70, y0: -2, y1: 40 },
+];
+const spikes = [ { x0: 10, n: 3, y: 0 }, { x0: 29, n: 1, y: -1 }, { x0: 40, n: 2, y: -2 } ];
+const crusher = { x0: 24, x1: 26.4, bottom: moment === 'death' ? -1.32 : -5.7 };
+
+// ---- svg helpers --------------------------------------------------------------
+const out = [];
+const add = s => out.push(s);
+const f = n => Math.round(n * 100) / 100;
+
+// ---------------------------------------------------------------------------
+// BACKGROUND
+// ---------------------------------------------------------------------------
+function background() {
+  if (theme === 'minimal') {
+    add(`<rect width="${W}" height="${H}" fill="${C.paper}"/>`);
+    // distant blocky silhouettes, parallax 0.35
+    const par = 0.35;
+    seed = 99;
+    for (let i = -4; i < 40; i++) {
+      const wx = i * 3.1 + rnd() * 1.2;
+      const x = (wx - camX * par) * T * 0.55 + 0;
+      const w = (0.8 + rnd() * 2.2) * T * 0.55;
+      const h = (1.5 + rnd() * 6) * T * 0.55;
+      const base = groundY - T * 0.6;
+      if (rnd() < 0.25) {
+        add(`<polygon points="${f(x)},${f(base)} ${f(x + w / 2)},${f(base - h * 0.7)} ${f(x + w)},${f(base)}" fill="${C.faint}"/>`);
+      } else {
+        add(`<rect x="${f(x)}" y="${f(base - h)}" width="${f(w)}" height="${f(h + 4)}" fill="${C.faint}"/>`);
+      }
+    }
+    // horizon hairline
+    add(`<rect x="0" y="${groundY - T * 0.6}" width="${W}" height="${T * 2}" fill="${C.faint}"/>`);
+    // floating dust
+    for (let i = 0; i < (view === 'phone' ? 18 : 40); i++) {
+      add(`<circle cx="${f(rnd() * W)}" cy="${f(rnd() * groundY * 0.95)}" r="${f(1 + rnd() * 1.6)}" fill="${C.faint2}"/>`);
+    }
+    return;
+  }
+  const s = C.sky;
+  add(`<defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${s.top}"/><stop offset="1" stop-color="${s.bot}"/></linearGradient>
+    <radialGradient id="sunglow"><stop offset="0" stop-color="${s.sun}" stop-opacity=".9"/><stop offset="1" stop-color="${s.sun}" stop-opacity="0"/></radialGradient>
+  </defs>`);
+  add(`<rect width="${W}" height="${H}" fill="url(#sky)"/>`);
+  seed = 7;
+  if (zone === 5) {
+    for (let i = 0; i < (view === 'phone' ? 40 : 110); i++) {
+      const r = rnd() < 0.15 ? 1.8 : 1;
+      add(`<circle cx="${f(rnd() * W)}" cy="${f(rnd() * groundY * 0.75)}" r="${r}" fill="#FFF3DC" opacity="${f(0.35 + rnd() * 0.6)}"/>`);
+    }
+  }
+  // sun / moon
+  const sunX = view === 'phone' ? W * 0.74 : W * 0.7, sunY = view === 'phone' ? groundY - 210 : groundY - 260;
+  const sunR = view === 'phone' ? 46 : 92;
+  add(`<circle cx="${sunX}" cy="${sunY}" r="${sunR * 2.4}" fill="url(#sunglow)"/>`);
+  add(`<circle cx="${sunX}" cy="${sunY}" r="${sunR}" fill="${s.sun}"/>`);
+  if (zone === 5) add(`<circle cx="${sunX + sunR * 0.38}" cy="${sunY - sunR * 0.2}" r="${sunR * 0.86}" fill="${s.top}" opacity=".0"/>`);
+  // clouds (parallax 0.2)
+  const cloud = (cx, cy, k) => {
+    const parts = [[0, 0, 1], [-0.9, 0.25, 0.7], [0.95, 0.2, 0.75], [0.35, -0.35, 0.8], [-0.4, -0.25, 0.65]];
+    add(`<g opacity="${zone === 5 ? .35 : .85}">` + parts.map(([dx, dy, r]) => `<circle cx="${f(cx + dx * k)}" cy="${f(cy + dy * k)}" r="${f(r * k * 0.75)}" fill="${s.cloud}"/>`).join('') +
+      `<rect x="${f(cx - 1.5 * k)}" y="${f(cy + 0.05 * k)}" width="${f(3 * k)}" height="${f(0.55 * k)}" rx="${f(0.27 * k)}" fill="${s.cloud}"/></g>`);
+  };
+  const ck = view === 'phone' ? 26 : 46;
+  if (view === 'phone') { cloud(70, 250, ck); cloud(300, 330, ck * 0.8); }
+  else { cloud(230, 230, ck); cloud(980, 170, ck * 0.8); cloud(1420, 330, ck * 0.7); }
+  // hills: two rounded layers
+  const hills = (color, baseY, amp, period, phase, par) => {
+    let d = `M -10 ${H} L -10 ${baseY}`;
+    for (let x = -10; x <= W + 10; x += 8) {
+      const wx = x / T + camX * par;
+      const y = baseY - amp * (0.55 + 0.45 * Math.sin(wx / period + phase)) - amp * 0.25 * Math.sin(wx / (period * 0.37) + phase * 2);
+      d += ` L ${x} ${f(y)}`;
+    }
+    d += ` L ${W + 10} ${H} Z`;
+    add(`<path d="${d}" fill="${color}"/>`);
+  };
+  hills(s.hillFar, groundY - T * 1.2, T * 3.2, 2.6, 1.3, 0.15);
+  hills(s.hillNear, groundY - T * 0.2, T * 2.0, 1.7, 4.1, 0.3);
+}
+
+// ---------------------------------------------------------------------------
+// LEVEL
+// ---------------------------------------------------------------------------
+function level() {
+  for (const s of solids) {
+    const x = sx(s.x0), y = sy(s.y0), w = (s.x1 - s.x0) * T, h = Math.min((s.y1 - s.y0) * T, H - y + 40);
+    if (x > W + 50 || x + w < -50) continue;
+    if (theme === 'minimal') {
+      add(`<rect x="${f(x)}" y="${f(y)}" width="${f(w)}" height="${f(h)}" fill="${C.ink}"/>`);
+      continue;
+    }
+    const sw = T * 0.11, r = T * 0.32;
+    add(`<rect x="${f(x)}" y="${f(y)}" width="${f(w)}" height="${f(h)}" rx="${r}" fill="${C.cream}" stroke="${C.ink}" stroke-width="${f(sw)}"/>`);
+    // underside shade band + top highlight lip
+    add(`<clipPath id="c${s.x0}"><rect x="${f(x)}" y="${f(y)}" width="${f(w)}" height="${f(h)}" rx="${r}"/></clipPath>`);
+    add(`<g clip-path="url(#c${s.x0})">`);
+    if (s.floating) add(`<rect x="${f(x)}" y="${f(y + h * 0.62)}" width="${f(w)}" height="${f(h)}" fill="${C.creamShade}"/>`);
+    else {
+      add(`<rect x="${f(x)}" y="${f(y + T * 0.55)}" width="${f(w)}" height="${f(h)}" fill="${C.creamShade}" opacity=".55"/>`);
+      seed = Math.round(s.x0 * 31 + 500);
+      for (let i = 0; i < w * h / 2600; i++) {
+        const px = x + rnd() * w, py = y + T * 0.9 + rnd() * (h - T);
+        add(`<ellipse cx="${f(px)}" cy="${f(py)}" rx="${f(T * (0.08 + rnd() * 0.1))}" ry="${f(T * 0.06)}" fill="${C.creamShade}"/>`);
+      }
+    }
+    add(`<rect x="${f(x + T * 0.28)}" y="${f(y + T * 0.13)}" width="${f(Math.max(0, w - T * 0.56))}" height="${f(T * 0.1)}" rx="${f(T * 0.05)}" fill="${C.creamHi}"/>`);
+    add(`</g>`);
+    add(`<rect x="${f(x)}" y="${f(y)}" width="${f(w)}" height="${f(h)}" rx="${r}" fill="none" stroke="${C.ink}" stroke-width="${f(sw)}"/>`);
+  }
+  // spikes
+  for (const sp of spikes) {
+    for (let i = 0; i < sp.n; i++) {
+      const x0 = sx(sp.x0 + i), x1 = sx(sp.x0 + i + 1), by = sy(sp.y), ty = sy(sp.y - 0.92);
+      if (theme === 'minimal') {
+        add(`<polygon points="${f(x0)},${f(by + 1)} ${f((x0 + x1) / 2)},${f(ty)} ${f(x1)},${f(by + 1)}" fill="${C.ink}"/>`);
+      } else {
+        const inset = T * 0.06;
+        add(`<polygon points="${f(x0 + inset)},${f(by)} ${f((x0 + x1) / 2)},${f(ty)} ${f(x1 - inset)},${f(by)}" fill="${C.hazard}" stroke="${C.ink}" stroke-width="${f(T * 0.09)}" stroke-linejoin="round"/>`);
+        add(`<polygon points="${f((x0 + x1) / 2 - T * 0.06)},${f(ty + T * 0.32)} ${f((x0 + x1) / 2)},${f(ty + T * 0.14)} ${f((x0 + x1) / 2 + T * 0.03)},${f(ty + T * 0.36)}" fill="#FFFFFF" opacity=".75"/>`);
+      }
+    }
+  }
+  // crusher
+  const cx0 = sx(crusher.x0), cx1 = sx(crusher.x1), cw = cx1 - cx0;
+  const teethH = T * 0.42, blockH = T * 2.3;
+  const by = sy(crusher.bottom) - teethH, ty = by - blockH;
+  const midX = (cx0 + cx1) / 2;
+  const teeth = n => { let pts = `${f(cx0)},${f(by)}`; for (let i = 0; i < n; i++) { pts += ` ${f(cx0 + cw * (i + 0.5) / n)},${f(by + teethH)} ${f(cx0 + cw * (i + 1) / n)},${f(by)}`; } return pts; };
+  if (theme === 'minimal') {
+    add(`<rect x="${f(midX - T * 0.12)}" y="-10" width="${f(T * 0.24)}" height="${f(ty + 12)}" fill="${C.ink}"/>`);
+    add(`<rect x="${f(cx0)}" y="${f(ty)}" width="${f(cw)}" height="${f(blockH + 1)}" fill="${C.ink}"/>`);
+    add(`<polygon points="${teeth(4)}" fill="${C.ink}"/>`);
+    // warning chevrons cut into the block (shape cue, not colour)
+    for (let i = 0; i < 3; i++) {
+      const yy = ty + T * 0.45 + i * T * 0.48;
+      add(`<polyline points="${f(cx0 + cw * 0.22)},${f(yy)} ${f(midX)},${f(yy + T * 0.26)} ${f(cx1 - cw * 0.22)},${f(yy)}" fill="none" stroke="${C.paper}" stroke-width="${f(T * 0.1)}" stroke-linecap="square"/>`);
+    }
+  } else {
+    const sw = T * 0.11;
+    // chain
+    for (let y = ty - T * 0.35; y > -T; y -= T * 0.42) add(`<rect x="${f(midX - T * 0.13)}" y="${f(y - T * 0.32)}" width="${f(T * 0.26)}" height="${f(T * 0.42)}" rx="${f(T * 0.12)}" fill="none" stroke="${zone === 5 ? '#C9A6EA' : C.ink}" stroke-width="${f(T * 0.08)}"/>`);
+    add(`<polygon points="${teeth(4)}" fill="${C.hazard}" stroke="${C.ink}" stroke-width="${f(sw)}" stroke-linejoin="round"/>`);
+    add(`<clipPath id="crush"><rect x="${f(cx0)}" y="${f(ty)}" width="${f(cw)}" height="${f(blockH)}" rx="${f(T * 0.3)}"/></clipPath>`);
+    add(`<rect x="${f(cx0)}" y="${f(ty)}" width="${f(cw)}" height="${f(blockH)}" rx="${f(T * 0.3)}" fill="${C.hazard}"/>`);
+    add(`<g clip-path="url(#crush)">`);
+    for (let i = -3; i < 8; i++) add(`<polygon points="${f(cx0 + i * T * 0.6)},${f(ty + blockH)} ${f(cx0 + i * T * 0.6 + T * 0.3)},${f(ty + blockH)} ${f(cx0 + i * T * 0.6 + T * 0.3 + blockH * 0.6)},${f(ty)} ${f(cx0 + i * T * 0.6 + blockH * 0.6)},${f(ty)}" fill="${C.hazardDark}" opacity=".35"/>`);
+    add(`<rect x="${f(cx0)}" y="${f(ty + blockH * 0.78)}" width="${f(cw)}" height="${f(blockH)}" fill="${C.hazardDark}" opacity=".55"/>`);
+    add(`</g>`);
+    add(`<rect x="${f(cx0)}" y="${f(ty)}" width="${f(cw)}" height="${f(blockH)}" rx="${f(T * 0.3)}" fill="none" stroke="${C.ink}" stroke-width="${f(sw)}"/>`);
+    // grumpy face
+    const ey = ty + blockH * 0.48, ex = cw * 0.2;
+    for (const d of [-1, 1]) {
+      add(`<ellipse cx="${f(midX + d * ex)}" cy="${f(ey)}" rx="${f(T * 0.2)}" ry="${f(T * 0.17)}" fill="#FFFFFF" stroke="${C.ink}" stroke-width="${f(T * 0.07)}"/>`);
+      add(`<circle cx="${f(midX + d * ex + (moment === 'death' ? 0 : -T * 0.07))}" cy="${f(ey + T * 0.05)}" r="${f(T * 0.08)}" fill="${C.ink}"/>`);
+      add(`<line x1="${f(midX + d * ex - d * T * 0.26)}" y1="${f(ey - T * 0.14)}" x2="${f(midX + d * ex + d * T * 0.2)}" y2="${f(ey - T * 0.36)}" stroke="${C.ink}" stroke-width="${f(T * 0.1)}" stroke-linecap="round"/>`);
+    }
+    if (moment === 'death') add(`<path d="M ${f(midX - T * 0.3)} ${f(ey + T * 0.48)} Q ${f(midX)} ${f(ey + T * 0.3)} ${f(midX + T * 0.3)} ${f(ey + T * 0.48)}" fill="none" stroke="${C.ink}" stroke-width="${f(T * 0.08)}" stroke-linecap="round" transform="rotate(180 ${f(midX)} ${f(ey + T * 0.4)})"/>`);
+    else add(`<line x1="${f(midX - T * 0.22)}" y1="${f(ey + T * 0.45)}" x2="${f(midX + T * 0.22)}" y2="${f(ey + T * 0.45)}" stroke="${C.ink}" stroke-width="${f(T * 0.08)}" stroke-linecap="round"/>`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THE BLOB
+// ---------------------------------------------------------------------------
+function blob() {
+  const r = T * 0.82;
+  if (moment === 'death') return deadBlob();
+  const cx = sx(hero.x), cy = sy(hero.y);
+  const kx = 0.86, ky = 1.16;           // mid-jump stretch
+  const tilt = 8;                        // leaning into the crowd's pull (right)
+  // jump arc + takeoff dust
+  const tx = sx(9.35), tyy = sy(0);
+  let arc = '';
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    const x = tx + (cx - tx) * t;
+    const y = tyy - (tyy - cy) * (1 - (1 - t) * (1 - t)) - r * ky * t;
+    if (i > 1 && i < 10) arc += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(T * 0.045 * (0.5 + t * 0.6))}" fill="${theme === 'minimal' ? C.blob : '#FFFFFF'}" opacity="${f(0.15 + t * 0.45)}"/>`;
+  }
+  add(arc);
+  seed = 21;
+  for (let i = 0; i < 6; i++) {
+    const px = tx - T * 0.6 + rnd() * T * 1.1, py = tyy - T * (0.08 + rnd() * 0.25), pr = T * (0.08 + rnd() * 0.12);
+    add(theme === 'minimal'
+      ? `<circle cx="${f(px)}" cy="${f(py)}" r="${f(pr)}" fill="none" stroke="${C.ink}" stroke-width="1.5" opacity="${f(0.25 + rnd() * 0.3)}"/>`
+      : `<circle cx="${f(px)}" cy="${f(py)}" r="${f(pr)}" fill="#FFFBF1" stroke="${C.ink}" stroke-width="${f(T * 0.04)}" opacity="${f(0.7 + rnd() * 0.3)}"/>`);
+  }
+  add(`<g transform="translate(${f(cx)} ${f(cy)}) rotate(${tilt})">`);
+  // body: slightly pear-shaped blob
+  const bw = r * kx, bh = r * ky;
+  const body = `M 0 ${f(-bh)} C ${f(bw * 0.62)} ${f(-bh)} ${f(bw * 1.05)} ${f(-bh * 0.42)} ${f(bw * 1.04)} ${f(bh * 0.18)} C ${f(bw * 1.03)} ${f(bh * 0.78)} ${f(bw * 0.58)} ${f(bh)} 0 ${f(bh)} C ${f(-bw * 0.58)} ${f(bh)} ${f(-bw * 1.03)} ${f(bh * 0.78)} ${f(-bw * 1.04)} ${f(bh * 0.18)} C ${f(-bw * 1.05)} ${f(-bh * 0.42)} ${f(-bw * 0.62)} ${f(-bh)} 0 ${f(-bh)} Z`;
+  if (theme === 'minimal') {
+    add(`<path d="${body}" fill="${C.blob}"/>`);
+  } else {
+    add(`<clipPath id="bodyclip"><path d="${body}"/></clipPath>`);
+    add(`<path d="${body}" fill="${C.blob}"/>`);
+    add(`<g clip-path="url(#bodyclip)"><ellipse cx="${f(bw * 0.35)}" cy="${f(bh * 0.95)}" rx="${f(bw * 1.2)}" ry="${f(bh * 0.5)}" fill="${C.blobShade}"/></g>`);
+    add(`<ellipse cx="${f(-bw * 0.5)}" cy="${f(-bh * 0.62)}" rx="${f(bw * 0.2)}" ry="${f(bh * 0.11)}" transform="rotate(-35 ${f(-bw * 0.5)} ${f(-bh * 0.62)})" fill="#FFFFFF" opacity=".85"/>`);
+    add(`<path d="${body}" fill="none" stroke="${C.ink}" stroke-width="${f(T * 0.1)}"/>`);
+  }
+  // eyes: big, wide (panic), pupils pin-pricked and pulled toward the crowd's push (right/up)
+  const eyeY = -bh * 0.18;
+  for (const d of [-1, 1]) {
+    const ex = d * bw * 0.36;
+    const erx = bw * 0.3, ery = bh * 0.34;
+    add(`<ellipse cx="${f(ex)}" cy="${f(eyeY)}" rx="${f(erx)}" ry="${f(ery)}" fill="${C.eyeW}" ${theme === 'cartoon' ? `stroke="${C.ink}" stroke-width="${f(T * 0.06)}"` : ''}/>`);
+    // looking DOWN at the spikes in panic, slightly right
+    add(`<circle cx="${f(ex + erx * 0.32)}" cy="${f(eyeY + ery * 0.4)}" r="${f(erx * 0.36)}" fill="${theme === 'minimal' ? C.ink : C.ink}"/>`);
+    add(`<circle cx="${f(ex + erx * 0.22)}" cy="${f(eyeY + ery * 0.26)}" r="${f(erx * 0.11)}" fill="#FFFFFF"/>`);
+    // raised worried brows
+    const bx = ex, byy = eyeY - ery - bh * 0.1;
+    add(`<path d="M ${f(bx - erx * 0.8)} ${f(byy + bh * (d < 0 ? 0.07 : -0.06))} Q ${f(bx)} ${f(byy - bh * 0.1)} ${f(bx + erx * 0.8)} ${f(byy + bh * (d < 0 ? -0.06 : 0.07))}" fill="none" stroke="${theme === 'minimal' ? C.ink : C.ink}" stroke-width="${f(T * 0.07)}" stroke-linecap="round"/>`);
+  }
+  // little "o" mouth of alarm
+  add(`<ellipse cx="${f(bw * 0.06)}" cy="${f(bh * 0.42)}" rx="${f(bw * 0.12)}" ry="${f(bh * 0.14)}" fill="${theme === 'minimal' ? C.ink : C.ink}"/>`);
+  add(`</g>`);
+  // sweat drops flung off
+  const drop = (x, y, s, rot) => add(`<path transform="translate(${f(x)} ${f(y)}) rotate(${rot}) scale(${s})" d="M 0 -10 C 4 -3 7 1 7 5 A 7 7 0 0 1 -7 5 C -7 1 -4 -3 0 -10 Z" fill="${theme === 'minimal' ? C.paper : '#9FE4FF'}" stroke="${C.ink}" stroke-width="${theme === 'minimal' ? 1.6 : 2.2}"/>`);
+  drop(cx - r * 1.15, cy - r * 0.95, T / 50 * 0.9, -30);
+  drop(cx - r * 1.45, cy - r * 0.45, T / 50 * 0.6, -55);
+  // panic lines
+  for (const a of [-120, -95, -70]) {
+    const rad = a * Math.PI / 180;
+    const r1 = r * 1.45, r2 = r * 1.75;
+    add(`<line x1="${f(cx + Math.cos(rad) * r1)}" y1="${f(cy + Math.sin(rad) * r1 * 1.1)}" x2="${f(cx + Math.cos(rad) * r2)}" y2="${f(cy + Math.sin(rad) * r2 * 1.1)}" stroke="${C.ink}" stroke-width="${f(T * 0.06)}" stroke-linecap="round"/>`);
+  }
+}
+
+function deadBlob() {
+  // pancake squished under the crusher, oozing out both sides, dizzy X eyes on the left
+  const y = sy(-1) - T * 0.17;
+  const x0 = sx(crusher.x0 - 1.15), x1 = sx(crusher.x1 + 0.85);
+  const d = `M ${f(x0)} ${f(y + T * 0.17)} C ${f(x0 - T * 0.1)} ${f(y - T * 0.22)} ${f(x0 + T * 0.5)} ${f(y - T * 0.26)} ${f(x0 + T * 0.9)} ${f(y - T * 0.16)} L ${f(x1 - T * 0.7)} ${f(y - T * 0.16)} C ${f(x1 - T * 0.3)} ${f(y - T * 0.24)} ${f(x1 + T * 0.12)} ${f(y - T * 0.1)} ${f(x1)} ${f(y + T * 0.17)} Z`;
+  add(`<path d="${d}" fill="${C.blob}" ${theme === 'cartoon' ? `stroke="${C.ink}" stroke-width="${f(T * 0.09)}"` : ''}/>`);
+  // splats
+  seed = 77;
+  for (let i = 0; i < 9; i++) {
+    const a = Math.PI + rnd() * Math.PI, dist = T * (1.2 + rnd() * 1.6);
+    const px = (x0 + x1) / 2 + Math.cos(a) * dist * 1.4, py = y + Math.sin(a) * dist * 0.8;
+    add(`<circle cx="${f(px)}" cy="${f(py)}" r="${f(T * (0.06 + rnd() * 0.1))}" fill="${C.blob}" ${theme === 'cartoon' ? `stroke="${C.ink}" stroke-width="${f(T * 0.04)}"` : ''}/>`);
+  }
+  // X eyes on the part sticking out on the left
+  const ex = x0 + T * 0.42, ey = y - T * 0.04;
+  for (const k of [0, 1]) {
+    const xx = ex + k * T * 0.36, s = T * 0.12;
+    add(`<path d="M ${f(xx - s)} ${f(ey - s)} L ${f(xx + s)} ${f(ey + s)} M ${f(xx + s)} ${f(ey - s)} L ${f(xx - s)} ${f(ey + s)}" stroke="${C.ink}" stroke-width="${f(T * 0.07)}" stroke-linecap="round"/>`);
+  }
+  // little stars of impact
+  const star = (x, y2, s) => add(`<path transform="translate(${f(x)} ${f(y2)}) scale(${s})" d="M0 -10 L3 -3 L10 0 L3 3 L0 10 L-3 3 L-10 0 L-3 -3 Z" fill="${theme === 'minimal' ? C.ink : '#FFF1D6'}" stroke="${C.ink}" stroke-width="${theme === 'minimal' ? 0 : 2}"/>`);
+  star(sx(crusher.x0) - T * 0.7, y - T * 1.1, 0.9);
+  star(sx(crusher.x1) + T * 0.8, y - T * 1.5, 0.7);
+  star(sx(crusher.x1) + T * 0.3, y - T * 2.3, 0.5);
+}
+
+// ---------------------------------------------------------------------------
+// THE CROWD: every dot is one player, leaning toward what they're pressing
+// ---------------------------------------------------------------------------
+function crowd() {
+  seed = 4242;
+  const n = moment === 'death' ? 46 : view === 'phone' ? 70 : 125;
+  const center = moment === 'death' ? { x: hero.x - 0.6, y: -3.4 } : { x: hero.x, y: hero.y };
+  const dots = [];
+  for (let i = 0; i < n; i++) {
+    const r = rnd();
+    const intent = r < 0.36 ? 'L' : r < 0.84 ? 'R' : 'J';
+    const jumpToo = intent !== 'J' && rnd() < 0.2;
+    let dx = gauss() * 1.05 + (intent === 'R' ? 2.2 : intent === 'L' ? -2.3 : 0);
+    let dy = gauss() * 0.95 - 0.35 - (intent === 'J' ? 1.9 : jumpToo ? 0.7 : 0);
+    if (moment === 'death') { dx *= 1.5; dy = dy * 0.6 + 0.6; }
+    const dist = Math.hypot(dx, dy * 1.2);
+    if (dist < 1.55) { const k = 1.55 / Math.max(dist, 0.01); dx *= k; dy *= k; }
+    dots.push({ x: center.x + dx, y: center.y + dy, intent, jumpToo });
+  }
+  const own = moment === 'death'
+    ? { x: center.x + 3.4, y: center.y + 0.4, intent: 'R', jumpToo: true, own: true }
+    : { x: center.x + 2.9, y: center.y - 1.0, intent: 'R', jumpToo: true, own: true };
+  const draw = (d) => {
+    const x = sx(d.x), y = sy(d.y);
+    if (y > H || y < 0) return;
+    let vx = d.intent === 'R' ? 1 : d.intent === 'L' ? -1 : 0;
+    let vy = d.intent === 'J' ? -1 : d.jumpToo ? -0.7 : 0.1;
+    const len = Math.hypot(vx, vy); vx /= len; vy /= len;
+    const rr = (d.own ? 0.19 : 0.12) * T * (view === 'phone' ? 1.25 : 1);
+    const tail = rr * (d.own ? 3.0 : 3.4);
+    const px = -vy, py = vx;
+    const tx = x - vx * tail, ty = y - vy * tail;
+    const lean = d.intent === 'J' ? 0 : vx * 22;
+    const fill = d.own ? C.blob : C.dot;
+    const tailFill = theme === 'minimal' ? (d.own ? C.blob : C.dot) : '#FFFFFF';
+    add(`<polygon points="${f(x + px * rr * 0.85)},${f(y + py * rr * 0.85)} ${f(tx)},${f(ty)} ${f(x - px * rr * 0.85)},${f(y - py * rr * 0.85)}" fill="${tailFill}" opacity="${d.own ? 0.5 : 0.32}"/>`);
+    const stroke = theme === 'minimal' ? `stroke="${C.paper}" stroke-width="1.2"` : `stroke="${C.ink}" stroke-width="${d.own ? 2.4 : 1.2}" stroke-opacity="${d.own ? 1 : .45}"`;
+    add(`<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f(rr * 0.92)}" ry="${f(rr * 1.08)}" transform="rotate(${f(lean)} ${f(x)} ${f(y)})" fill="${fill}" ${stroke}/>`);
+    if (d.own) {
+      const ring = rr * 2.1;
+      add(`<circle cx="${f(x)}" cy="${f(y)}" r="${f(ring)}" fill="none" stroke="${theme === 'minimal' ? C.blob : C.ink}" stroke-width="${theme === 'minimal' ? 1.6 : 2.2}"/>`);
+      if (theme === 'cartoon') add(`<circle cx="${f(x)}" cy="${f(y)}" r="${f(ring + 2.4)}" fill="none" stroke="#FFFFFF" stroke-width="2"/>`);
+      const fs = view === 'phone' ? 12 : 14;
+      const lx = x + ring + 6, ly = y - ring - 2;
+      const pillW = fs * 2.3, pillH = fs * 1.45;
+      if (theme === 'minimal') {
+        add(`<rect x="${f(lx)}" y="${f(ly - pillH / 2)}" width="${f(pillW)}" height="${f(pillH)}" fill="${C.blob}"/>`);
+        add(`<text x="${f(lx + pillW / 2)}" y="${f(ly + fs * 0.36)}" text-anchor="middle" font-family="${C.text}" font-weight="700" font-size="${fs}" fill="#FFFFFF">you</text>`);
+      } else {
+        add(`<rect x="${f(lx)}" y="${f(ly - pillH / 2)}" width="${f(pillW)}" height="${f(pillH)}" rx="${f(pillH / 2)}" fill="${C.blob}" stroke="${C.ink}" stroke-width="2"/>`);
+        add(`<text x="${f(lx + pillW / 2)}" y="${f(ly + fs * 0.36)}" text-anchor="middle" font-family="${C.text}" font-weight="800" font-size="${fs}" fill="${C.ink}">you</text>`);
+      }
+    }
+  };
+  dots.forEach(draw);
+  draw(own);
+}
+
+// ---------------------------------------------------------------------------
+// HUD
+// ---------------------------------------------------------------------------
+function counter(value, flipLast) {
+  const phone = view === 'phone';
+  const cw = phone ? 36 : 58, ch = phone ? 52 : 80, gap = phone ? 5 : 7, fs = phone ? 36 : 58;
+  const str = value.toLocaleString('en-US');
+  const comma = phone ? 10 : 16;
+  let total = 0;
+  for (const c of str) total += c === ',' ? comma : cw + gap;
+  total -= gap;
+  let x = W / 2 - total / 2;
+  const y = phone ? 58 : 34;
+  const minimal = theme === 'minimal';
+  const cardFill = minimal ? C.ink : C.cream;
+  const digitFill = minimal ? C.paper : C.ink;
+  const r = minimal ? 3 : 12;
+  const digit = (ch2, x2, extra = '') => `<text x="${f(x2 + cw / 2)}" y="${f(y + ch / 2 + fs * 0.35)}" text-anchor="middle" font-family="${C.display}" font-size="${fs}" fill="${digitFill}" ${extra}>${ch2}</text>`;
+  const chars = [...str];
+  chars.forEach((c, i) => {
+    if (c === ',') {
+      add(`<text x="${f(x + comma / 2)}" y="${f(y + ch - (phone ? 4 : 6))}" text-anchor="middle" font-family="${C.display}" font-size="${fs * 0.7}" fill="${C.hud}">,</text>`);
+      x += comma; return;
+    }
+    const isLast = i === chars.length - 1;
+    if (!minimal) add(`<rect x="${f(x)}" y="${f(y + 5)}" width="${cw}" height="${ch}" rx="${r}" fill="${C.ink}"/>`);
+    add(`<rect x="${f(x)}" y="${f(y)}" width="${cw}" height="${ch}" rx="${r}" fill="${cardFill}" ${minimal ? '' : `stroke="${C.ink}" stroke-width="3"`}/>`);
+    if (isLast && flipLast) {
+      // the digit that just ticked: card lights up in the blob colour, with a +1 pop
+      add(`<rect x="${f(x)}" y="${f(y)}" width="${cw}" height="${ch}" rx="${r}" fill="${C.blob}" ${minimal ? '' : `stroke="${C.ink}" stroke-width="3"`}/>`);
+      add(`<text x="${f(x + cw / 2)}" y="${f(y + ch / 2 + fs * 0.35)}" text-anchor="middle" font-family="${C.display}" font-size="${fs}" fill="${minimal ? '#FFFFFF' : C.ink}">${c}</text>`);
+      const px = x + cw * 0.5, py = y - (phone ? 6 : 10);
+      add(`<text x="${f(px)}" y="${f(py)}" font-family="${C.display}" text-anchor="middle" font-size="${phone ? 17 : 24}" fill="${minimal ? C.blob : C.blob}" ${minimal ? '' : `stroke="${C.ink}" stroke-width="4" paint-order="stroke"`} transform="rotate(12 ${f(px)} ${f(py)})">+1</text>`);
+    } else {
+      add(digit(c, x));
+    }
+    // split line
+    add(`<rect x="${f(x)}" y="${f(y + ch / 2 - (minimal ? 1 : 1.5))}" width="${cw}" height="${minimal ? 2 : 3}" fill="${minimal ? C.paper : C.ink}" opacity="${minimal ? 1 : .9}"/>`);
+    if (!minimal) for (const hx of [x - 1.5, x + cw - 3]) add(`<rect x="${f(hx)}" y="${f(y + ch / 2 - 5)}" width="4.5" height="10" rx="2" fill="${C.ink}"/>`);
+    x += cw + gap;
+  });
+  const label = 'deaths';
+  add(`<text x="${W / 2}" y="${f(y + ch + (phone ? 24 : 32))}" text-anchor="middle" font-family="${C.text}" font-weight="700" font-size="${phone ? 13 : 16}" letter-spacing=".02em" fill="${C.hudSoft}" ${theme === 'minimal' ? `stroke="${C.paper}" stroke-width="5" paint-order="stroke"` : ''}>${label}</text>`);
+}
+
+function corners() {
+  const phone = view === 'phone';
+  const fs = phone ? 12 : 16, fsBig = phone ? 14 : 19;
+  const pad = phone ? 16 : 32, top = phone ? 64 : 42;
+  // players online
+  add(`<circle cx="${pad + 5}" cy="${top + fsBig * 0.6 - fsBig * 0.62 + 5}" r="5" fill="${theme === 'minimal' ? C.blob : '#3DDC84'}" ${theme === 'cartoon' ? `stroke="${C.ink}" stroke-width="2"` : ''}/>`);
+  add(`<text x="${pad + 16}" y="${top + fsBig * 0.36}" font-family="${C.text}" font-weight="800" font-size="${fsBig}" fill="${C.hud}">12,408</text>`);
+  add(`<text x="${pad}" y="${top + fsBig * 0.36 + fs * 1.45}" font-family="${C.text}" font-weight="600" font-size="${fs}" fill="${C.hudSoft}">playing now</text>`);
+  // record
+  const rx = W - pad;
+  add(`<text x="${rx}" y="${top + fsBig * 0.36}" text-anchor="end" font-family="${C.text}" font-weight="800" font-size="${fsBig}" fill="${C.hud}">Record 83%</text>`);
+  add(`<text x="${rx}" y="${top + fsBig * 0.36 + fs * 1.45}" text-anchor="end" font-family="${C.text}" font-weight="600" font-size="${fs}" fill="${C.hudSoft}">${phone ? 'run 3,940' : 'run 3,940, nine days ago'}</text>`);
+}
+
+function progress(runPct, recordPct) {
+  const phone = view === 'phone';
+  const y = phone ? H - 34 : H - 30;
+  const x0 = phone ? 18 : 32, x1 = W - (phone ? 82 : 110);
+  const w = x1 - x0;
+  const minimal = theme === 'minimal';
+  const th = minimal ? 4 : 8;
+  if (minimal) {
+    add(`<rect x="${x0}" y="${y - 4}" width="${w}" height="8" fill="${C.paper}" stroke="${C.ink}" stroke-width="1.5"/>`);
+    add(`<rect x="${x0 + 1.5}" y="${y - 2.5}" width="${f(w * runPct - 3)}" height="5" fill="${C.blob}"/>`);
+  } else {
+    add(`<rect x="${x0}" y="${y - th / 2}" width="${w}" height="${th}" rx="${th / 2}" fill="${C.cream}" stroke="${C.ink}" stroke-width="2.5"/>`);
+    add(`<rect x="${x0 + 1}" y="${y - th / 2 + 1}" width="${f(w * runPct)}" height="${th - 2}" rx="${(th - 2) / 2}" fill="${C.blob}"/>`);
+  }
+  // zone ticks (6 zones)
+  for (let i = 1; i < 6; i++) {
+    const tx = x0 + w * i / 6;
+    add(`<rect x="${f(tx - 1)}" y="${y - th / 2 - (minimal ? 0 : 3)}" width="2" height="${th + (minimal ? 0 : 6)}" fill="${C.ink}" opacity="${minimal ? 1 : .8}"/>`);
+  }
+  // record flag
+  const fx = x0 + w * recordPct;
+  const fh = phone ? 16 : 20;
+  add(`<line x1="${f(fx)}" y1="${y + th / 2}" x2="${f(fx)}" y2="${y - fh}" stroke="${minimal ? (view === 'phone' || moment === 'death' ? C.paper : C.ink) : (zone === 5 ? '#FFF3DC' : C.ink)}" stroke-width="2.2" stroke-linecap="round"/>`);
+  add(`<path d="M ${f(fx)} ${y - fh} L ${f(fx + fh * 0.75)} ${y - fh + fh * 0.28} L ${f(fx)} ${y - fh + fh * 0.56} Z" fill="${minimal ? C.blob : C.hazard}" stroke="${C.ink}" stroke-width="${minimal ? 1.5 : 2}" stroke-linejoin="round"/>`);
+  // current position marker: tiny blob
+  const mx = x0 + w * runPct, mr = phone ? 6 : 7.5;
+  add(`<circle cx="${f(mx)}" cy="${y}" r="${mr}" fill="${C.blob}" stroke="${minimal ? C.paper : C.ink}" stroke-width="${minimal ? 2 : 2.5}"/>`);
+  add(`<circle cx="${f(mx + mr * 0.25)}" cy="${f(y - mr * 0.15)}" r="${f(mr * 0.22)}" fill="${minimal ? '#FFFFFF' : C.ink}"/>`);
+  // sound + settings buttons
+  const bx = W - (phone ? 30 : 40);
+  icon('settings', bx, y, phone);
+  icon('sound', bx - (phone ? 38 : 48), y, phone);
+}
+
+function icon(kind, cx, cy, phone) {
+  const r = phone ? 15 : 18;
+  const minimal = theme === 'minimal';
+  const onGround = view === 'phone';
+  const stroke = C.ink;
+  const fill = minimal ? C.paper : C.cream;
+  add(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${minimal ? 1.6 : 2.5}"/>`);
+  const s = r / 18;
+  if (kind === 'sound') {
+    add(`<path transform="translate(${cx} ${cy}) scale(${f(s)})" d="M -8 -4 L -4 -4 L 2 -9 L 2 9 L -4 4 L -8 4 Z" fill="${stroke}"/>`);
+    add(`<path transform="translate(${cx} ${cy}) scale(${f(s)})" d="M 5.5 -5 Q 9 0 5.5 5 M 8.5 -8 Q 14 0 8.5 8" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round"/>`);
+  } else {
+    // "motion & accessibility" sliders glyph
+    add(`<g transform="translate(${cx} ${cy}) scale(${f(s)})" stroke="${stroke}" stroke-width="2" stroke-linecap="round"><line x1="-8" y1="-4.5" x2="8" y2="-4.5"/><line x1="-8" y1="4.5" x2="8" y2="4.5"/></g>`);
+    add(`<g transform="translate(${cx} ${cy}) scale(${f(s)})"><circle cx="-3" cy="-4.5" r="2.8" fill="${minimal ? C.paper : C.cream}" stroke="${stroke}" stroke-width="2"/><circle cx="3.5" cy="4.5" r="2.8" fill="${minimal ? C.paper : C.cream}" stroke="${stroke}" stroke-width="2"/></g>`);
+  }
+}
+
+function touchControls() {
+  const minimal = theme === 'minimal';
+  const y = H - 128;
+  const stroke = C.ink;
+  const fill = minimal ? C.paper : 'rgba(255,251,241,.94)';
+  const btn = (cx, r, path) => {
+    if (!minimal) add(`<circle cx="${cx}" cy="${y + 4}" r="${r}" fill="${C.ink}" opacity=".9"/>`);
+    add(`<circle cx="${cx}" cy="${y}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${minimal ? 2 : 3}"/>`);
+    add(`<path transform="translate(${cx} ${y})" d="${path}" fill="none" stroke="${stroke}" stroke-width="${minimal ? 3.5 : 5}" stroke-linecap="round" stroke-linejoin="round"/>`);
+  };
+  btn(58, 36, 'M 6 -12 L -6 0 L 6 12');
+  btn(140, 36, 'M -6 -12 L 6 0 L -6 12');
+  btn(W - 70, 46, 'M -14 7 L 0 -8 L 14 7');
+}
+
+function deathOverlay() {
+  const minimal = theme === 'minimal';
+  const cw = 318, chh = 252, cx0 = (W - cw) / 2, cy0 = 160;
+  const g = [];
+  if (minimal) {
+    g.push(`<rect x="${cx0}" y="${cy0}" width="${cw}" height="${chh}" fill="${C.paper}" stroke="${C.ink}" stroke-width="2"/>`);
+  } else {
+    g.push(`<rect x="${cx0}" y="${cy0 + 6}" width="${cw}" height="${chh}" rx="22" fill="${C.ink}"/>`);
+    g.push(`<rect x="${cx0}" y="${cy0}" width="${cw}" height="${chh}" rx="22" fill="${C.cream}" stroke="${C.ink}" stroke-width="3.5"/>`);
+  }
+  const mid = W / 2;
+  const soft = minimal ? 'rgba(0,0,0,.62)' : 'rgba(42,27,61,.7)';
+  g.push(`<text x="${mid}" y="${cy0 + 38}" text-anchor="middle" font-family="${C.text}" font-weight="700" font-size="15" fill="${soft}">So close. Run 4,812 made it</text>`);
+  g.push(`<text x="${mid}" y="${cy0 + 100}" text-anchor="middle" font-family="${C.display}" font-size="62" fill="${C.blob}" ${minimal ? '' : `stroke="${C.ink}" stroke-width="7" paint-order="stroke" stroke-linejoin="round"`}>78%</text>`);
+  g.push(`<text x="${mid}" y="${cy0 + 130}" text-anchor="middle" font-family="${C.text}" font-weight="700" font-size="15" fill="${C.ink}">then the Big Press flattened it.</text>`);
+  const bw = 196, bh = 46, bx = mid - bw / 2, by = cy0 + 152;
+  if (minimal) {
+    g.push(`<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="${C.ink}"/>`);
+  } else {
+    g.push(`<rect x="${bx}" y="${by + 4}" width="${bw}" height="${bh}" rx="${bh / 2}" fill="${C.ink}"/>`);
+    g.push(`<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${bh / 2}" fill="${C.blob}" stroke="${C.ink}" stroke-width="3"/>`);
+  }
+  const tc = minimal ? C.paper : C.ink;
+  g.push(`<g transform="translate(${bx + 34} ${by + bh / 2})"><path d="M -7 2 L -7 9 L 7 9 L 7 2" fill="none" stroke="${tc}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M 0 4 L 0 -9 M -5 -4.5 L 0 -9.5 L 5 -4.5" fill="none" stroke="${tc}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></g>`);
+  g.push(`<text x="${bx + 52}" y="${by + bh / 2 + 6}" font-family="${C.text}" font-weight="800" font-size="17" fill="${tc}">Share the clip</text>`);
+  g.push(`<text x="${mid}" y="${by + bh + 28}" text-anchor="middle" font-family="${C.text}" font-weight="600" font-size="13" fill="${soft}">Everyone back to the start in 3</text>`);
+  add(minimal ? g.join('') : `<g transform="rotate(-2 ${mid} ${cy0 + chh / 2})">${g.join('')}</g>`);
+}
+
+// ---------------------------------------------------------------------------
+background();
+level();
+crowd();
+blob();
+if (view === 'phone') touchControls();
+if (moment === 'death') deathOverlay();
+counter(moment === 'death' ? 4812 : 4811, moment === 'death' ? { from: '1', to: '2' } : null);
+corners();
+progress(moment === 'death' ? 0.78 : 0.38, 0.83);
+
+document.getElementById('root').innerHTML =
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${out.join('')}</svg>`;
+document.fonts.ready.then(() => { document.body.dataset.ready = '1'; });
+</script>
+</body>
+</html>
