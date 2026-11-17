@@ -1,0 +1,48 @@
+# Blobocracy build checklist
+
+Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
+
+## Milestone 1: playable core
+- [x] Project skeleton (monorepo, TypeScript, tests)
+- [x] Shared physics, crowd blending, level format, network protocol (57 tests)
+- [x] Game server: world, deaths, zones, record, pause when empty, voters, 128 crowd dots, virtual crowd, WebSocket relay
+- [~] Level 1 zones 1–2 (Welcome Mat, Pointy Meadow) designed; proving they're beatable
+- [~] Cartoon renderer, HUD, touch controls (matching the approved mockup)
+- [ ] Wire client to server, playtest the feel with bots, desktop + phone screenshots
+- [ ] Hand-off: local link, exact steps to play, command to add a few hundred bots
+
+## Milestone 2: the whole level
+- [ ] Zones 3–6 with crushers, moving platforms, crumbling blocks, springs, saws, conveyors, the Big Chomp
+- [ ] Level preview image
+- [ ] Solver proves an 8–12 minute perfect run
+- [ ] Simulated crowds tune difficulty (days–weeks to beat)
+
+## Milestone 3: feel
+- [ ] Blob personality: squash and stretch, blinking, looking at the crowd, panic
+- [ ] Death moment: freeze, heavy sound, counter flip, "how far" card, swoop back
+- [ ] New zone moment: banner, crowd cheer, sky shift
+- [ ] Particles, camera look-ahead and shake
+- [ ] Synthesized sound and music, mute, reduced motion
+- [ ] Loading screen
+
+## Milestone 4: scale
+- [ ] Separate simulation server and edge relays
+- [ ] Anti-bot: proof-of-work tokens, per-IP caps, rate limits, behaviour checks
+- [ ] Bot simulator and load test with thousands of connections
+- [ ] Graceful degradation; budget cap at $50/month with alert at $25
+
+## Milestone 5: history
+- [ ] Postgres + Redis, crash recovery
+- [ ] Run history page
+- [ ] Hall of fame page
+
+## Milestone 6: clips
+- [ ] Server-recorded replays on records and near misses
+- [ ] Clip page; vertical and wide video export; one-tap share
+- [ ] Link preview images
+
+## Milestone 7: win and ship
+- [ ] Win sequence and permanent hall of fame moment
+- [ ] Level 2 unlocks
+- [ ] Fly.io deployment walkthrough for you
+- [ ] README: setup, scaling, environment variables

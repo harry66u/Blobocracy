@@ -119,6 +119,21 @@ describe('jumping', () => {
     expect(apex).toBeLessThanOrEqual(1.4);
   });
 
+  // Crowds release jump over a spread of ~100-200 ms, so height must grow evenly
+  // with hold time instead of shooting up in the first frames.
+  test('jump height grows evenly with how long jump is held', () => {
+    const hold = (ms: number) => apexOf((i) => (i < Math.round(ms / 1000 * 60) ? JUMP : IDLE));
+    const h100 = hold(100), h150 = hold(150), h200 = hold(200);
+    expect(h100).toBeGreaterThan(1.6); expect(h100).toBeLessThan(2.1);
+    expect(h150).toBeGreaterThan(2.1); expect(h150).toBeLessThan(2.6);
+    expect(h200 - h150).toBeGreaterThan(0.3);
+    expect(h200 - h150).toBeLessThan(0.6);
+  });
+
+  test('a tiny hop stays under 1.2 tiles so low ceilings are survivable', () => {
+    expect(apexOf((i) => (i < 2 ? JUMP : IDLE))).toBeLessThan(1.2);
+  });
+
   test('holding jump through a landing does not jump again', () => {
     const b = createBody(FLAT);
     run(b, FLAT, 120, JUMP);
@@ -226,11 +241,10 @@ describe('one-way platforms', () => {
   const level = makeLevel([
     '..===.....G',
     '...........',
-    '...........',
     '.@.........',
     '###########',
   ]);
-  const PLATFORM_Y = 13 - PHYS.halfH;
+  const PLATFORM_Y = 14 - PHYS.halfH;
 
   test('jumping up through one from below passes, then landing on it holds', () => {
     const b = createBody(level);
@@ -240,7 +254,7 @@ describe('one-way platforms', () => {
       stepBody(b, JUMP, level);
       minY = Math.min(minY, b.y);
     }
-    expect(minY + PHYS.halfH).toBeLessThan(13);
+    expect(minY + PHYS.halfH).toBeLessThan(14);
     expect(b.grounded).toBe(true);
     expect(b.y).toBeCloseTo(PLATFORM_Y, 9);
   });
@@ -257,11 +271,10 @@ describe('one-way platforms', () => {
 
   test('does not block sideways movement', () => {
     const b = createBody(level);
-    b.y = 13.6; // overlaps the platform row
     b.x = 1;
-    b.grounded = false;
-    stepBody(b, { move: 1, jumpHeld: false }, level);
+    b.y = 14.6; // overlaps the platform row
     b.vx = PHYS.runSpeed;
+    b.grounded = false;
     run(b, level, 5, RIGHT);
     expect(b.x).toBeGreaterThan(1.5);
   });
@@ -295,7 +308,6 @@ describe('deaths', () => {
   test('touching ceiling spikes returns ceiling spikes', () => {
     const level = makeLevel([
       '.v........',
-      '..........',
       '..........',
       '..........',
       '.@.......G',
