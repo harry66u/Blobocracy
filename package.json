@@ -10,7 +10,12 @@
     "typecheck": "tsc -p packages/shared && tsc -p packages/sim && tsc -p packages/client",
     "dev:server": "tsx watch packages/sim/src/main.ts",
     "dev:client": "vite packages/client",
-    "dev": "node tools/dev.mjs"
+    "dev": "node tools/dev.mjs",
+    "build": "vite build packages/client",
+    "start": "tsx packages/sim/src/main.ts",
+    "og": "tsx tools/og-image.ts",
+    "loadtest": "tsx tools/loadtest.ts",
+    "shots:launch": "tsx tools/launch-shots.ts"
   },
   "engines": {
     "node": ">=22"

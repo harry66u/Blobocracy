@@ -26,10 +26,18 @@ export interface StateFrame {
 /** JSON text-frame events from the server. */
 export type ServerEvent =
   | { t: 'welcome'; levelId: number; version: number; deaths: number; record: { progress: number; run: number } | null; run: number; zone: number; online: number }
-  | { t: 'death'; run: number; cause: Cause; progress: number; deaths: number; zone: number; nearRecord: boolean }
+  | {
+    t: 'death'; run: number; cause: Cause; progress: number; deaths: number; zone: number; nearRecord: boolean;
+    /** Most players online at once during this run, and most of them steering (active voters) at once. */
+    peak: number; peakActive: number;
+    /** Run length in seconds of play (paused time excluded). */
+    secs: number;
+  }
   | { t: 'zone'; run: number; index: number; name: string }
   | { t: 'record'; run: number; progress: number }
-  | { t: 'reset'; run: number };
+  | { t: 'reset'; run: number }
+  /** The game is full (capacity or the budget cap): the client shows the packed screen and retries. */
+  | { t: 'packed'; deaths: number; online: number };
 
 const PHASES = ['running', 'dying', 'paused'] as const;
 const STATE_HEADER = 38;

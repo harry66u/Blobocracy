@@ -4,13 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#5FBFFF">
-<title>Blobocracy</title>
-<meta name="description" content="Everyone on the internet controls the same blob. One life. Can we beat it together?">
+<title>Blobocracy: the whole internet controls one blob</title>
+<meta name="description" content="Everyone on the site steers the same blob at the same time. One shared life: every death sends everyone back to the start. Free, no login, plays on your phone.">
+<link rel="canonical" href="__SITE_URL__/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Blobocracy">
+<meta property="og:url" content="__SITE_URL__/">
+<meta property="og:title" content="Blobocracy: the whole internet controls one blob">
+<meta property="og:description" content="Everyone on the site steers the same blob at the same time. One shared life: every death sends everyone back to the start.">
+<meta property="og:image" content="__SITE_URL__/og.png?v=__OG_VERSION__">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A yellow cartoon blob leaping over a gap in a sunny platformer level, surrounded by a swarm of white dots: the players steering it. Text: Blobocracy, the whole internet controls one blob.">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Blobocracy: the whole internet controls one blob">
+<meta name="twitter:description" content="Everyone on the site steers the same blob at the same time. One shared life: every death sends everyone back to the start.">
+<meta name="twitter:image" content="__SITE_URL__/og.png?v=__OG_VERSION__">
+<meta name="twitter:image:alt" content="A yellow cartoon blob leaping over a gap, steered by a swarm of players.">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
 <style>
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #5FBFFF; overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; }
   #game { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; }
   #status { position: fixed; left: 0; right: 0; bottom: 64px; text-align: center; font: 700 15px 'Atkinson Hyperlegible Next', system-ui, sans-serif; color: #2A1B3D; pointer-events: none; opacity: 0; transition: opacity .3s; }
   #status.show { opacity: 1; }
+  #packed { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(42,27,61,.35); font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; color: #2A1B3D; }
+  #packed[hidden] { display: none; }
+  #packed .card { background: #FFF1D6; border: 3.5px solid #2A1B3D; border-radius: 22px; box-shadow: 0 6px 0 #2A1B3D; max-width: 360px; padding: 24px 22px; text-align: center; transform: rotate(-1.5deg); }
+  #packed h1 { font: 400 32px 'Bagel Fat One', system-ui, sans-serif; margin: 0 0 6px; }
+  #packed .big { font: 400 54px 'Bagel Fat One', system-ui, sans-serif; color: #FFD21F; -webkit-text-stroke: 7px #2A1B3D; paint-order: stroke fill; margin: 4px 0 0; line-height: 1.1; }
+  #packed p { margin: 8px 0; font-weight: 700; font-size: 16px; line-height: 1.4; }
+  #packed .soft { color: rgba(42,27,61,.72); font-weight: 600; font-size: 14px; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 </head>
@@ -18,6 +46,15 @@
 <canvas id="game" aria-label="Blobocracy: everyone steers the same blob. Arrow keys or A and D to move, W, up or space to jump."></canvas>
 <div id="status" role="status"></div>
 <div id="announce" class="sr-only" aria-live="polite"></div>
+<div id="packed" hidden role="alertdialog" aria-labelledby="packed-title" aria-describedby="packed-desc">
+  <div class="card">
+    <h1 id="packed-title">Blobocracy is packed</h1>
+    <p id="packed-desc"><span data-online>0</span> people are steering the blob right now. It has died</p>
+    <div class="big" data-deaths>0</div>
+    <p>times so far.</p>
+    <p class="soft">Keep this tab open: you'll be let in automatically as soon as there's room.</p>
+  </div>
+</div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

@@ -64,6 +64,22 @@ describe('World', () => {
     expect(w.phase).toBe('dying');
   });
 
+  test('the death event carries the run\'s peak players, peak steering and length; the next run starts fresh', () => {
+    const w = new World(LEVEL);
+    w.noteOnline(40);
+    w.step({ left: 0, right: 7, jump: 0, active: 7 });
+    w.noteOnline(25);
+    const events = runUntil(w, RIGHT, (e) => e.t === 'death');
+    const death = events.find((e) => e.t === 'death') as Extract<ServerEvent, { t: 'death' }>;
+    expect(death.peak).toBe(40);
+    expect(death.peakActive).toBe(7);
+    expect(death.secs).toBeGreaterThan(0);
+    runUntil(w, NOBODY, (e) => e.t === 'reset');
+    w.noteOnline(3);
+    expect(w.peakOnline).toBe(3);
+    expect(w.peakActive).toBe(0);
+  });
+
   test('the dying hold lasts freeze + hold, then the run resets to spawn', () => {
     const w = new World(LEVEL);
     runUntil(w, RIGHT, (e) => e.t === 'death');

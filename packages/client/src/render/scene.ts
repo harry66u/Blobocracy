@@ -64,4 +64,4 @@ export interface Scene {
 }
 
 export type { Layout };
-export { renderFrame, resetRenderer } from './frame.ts';
+export { Renderer, liveRenderer, renderFrame, resetRenderer, type RenderOptions } from './frame.ts';

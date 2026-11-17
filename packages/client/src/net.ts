@@ -14,9 +14,12 @@ const BACKOFF_MAX_MS = 8000;
 const PING_EVERY_MS = 2000;
 /** Frames arrive 20 times a second; this much silence means the connection is dead even if no close came. */
 const SILENCE_MS = 3000;
+/** When the game is full the server closes with this code; wait longer before trying again. */
+const CLOSE_PACKED = 4001;
+const PACKED_RETRY_MS = 10_000;
 
 /** Opens the game socket and keeps it open: reconnects with backoff (0.5 s doubling to 8 s). */
-export function connect(url: string, onEvent: (e: ServerEvent) => void) {
+export function connect(url: string, onEvent: (e: ServerEvent) => void, onFrame: (f: StateFrame) => void = () => {}) {
   const state: NetState = { connected: false, latest: null, latestAt: 0, rttMs: 80, welcome: null };
   let ws: WebSocket | null = null;
   let backoff = BACKOFF_MIN_MS;
@@ -51,14 +54,14 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
       }
       const d = decodeServer(m.data as ArrayBuffer);
       if (!d) return;
-      if ('tick' in d) { state.latest = d; state.latestAt = performance.now(); }
+      if ('tick' in d) { state.latest = d; state.latestAt = performance.now(); onFrame(d); }
       else state.rttMs = state.rttMs * 0.7 + ((Math.floor(performance.now()) >>> 0) - d.t) * 0.3;
     };
-    ws.onclose = () => drop();
+    ws.onclose = (e) => drop(e.code === CLOSE_PACKED);
   };
 
   /** Forget the current socket (closed or silently dead) and schedule a fresh one. */
-  const drop = () => {
+  const drop = (packed = false) => {
     if (!ws) return;
     const dead = ws;
     ws = null;
@@ -67,7 +70,7 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
     state.connected = false;
     clearInterval(pingTimer);
     if (closed) return;
-    setTimeout(open, backoff);
+    setTimeout(open, packed ? PACKED_RETRY_MS + Math.random() * 5000 : backoff);
     backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
   };
   open();

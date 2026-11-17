@@ -11,6 +11,12 @@ import { predict, smooth } from './predict.ts';
 import { mountTouchControls } from './render/touch.ts';
 import { renderFrame, type Scene, type SceneDot, type SceneLevel } from './render/scene.ts';
 import { createCanvasView, loadFonts } from './view.ts';
+import { startAnalytics } from './analytics.ts';
+import { StatsStore, dayKey, noteDeath, notePlayed } from './stats.ts';
+import { FrameRecorder } from './share/replay.ts';
+import { ShareUI } from './share/ui.ts';
+import { causeName } from './share/words.ts';
+import { liveRenderer } from './render/scene.ts';
 
 const level = LEVEL1;
 // One SceneLevel object for the whole session: the renderer caches level chunks per object.
@@ -22,27 +28,60 @@ const sceneLevel: SceneLevel = {
 };
 
 const TICK_FLASH_S = 1.2;
-const CAUSE_NAMES: Record<string, string> = { spikes: 'Spikes', 'ceiling spikes': 'Ceiling Spikes', pit: 'Pit' };
+/** Absolute site address for shared links (set SITE_URL at build time; see vite.config.ts). */
+const SITE_URL: string = import.meta.env.VITE_SITE_URL || location.origin;
+
+const analytics = startAnalytics();
+const store = new StatsStore((() => { try { return localStorage; } catch { return null; } })());
+const recorder = new FrameRecorder();
+/** The run this browser last pressed something in: deaths of that run count as yours. */
+let pressedRun = -1;
 
 const hud = { deaths: 0, record: null as { progress: number; run: number } | null, tickedAt: -Infinity };
 let deathCard: Scene['deathCard'] = null;
 const statusEl = document.getElementById('status')!;
 const announceEl = document.getElementById('announce')!;
 
+const packedEl = document.getElementById('packed')!;
+let packedTimer: ReturnType<typeof setInterval> | undefined;
+function showPacked(deaths: number, online: number): void {
+  packedEl.querySelector('[data-deaths]')!.textContent = deaths.toLocaleString('en-US');
+  packedEl.querySelector('[data-online]')!.textContent = online.toLocaleString('en-US');
+  if (!packedEl.hidden) return;
+  packedEl.hidden = false;
+  // keep the counter live from the cached status endpoint while waiting
+  packedTimer = setInterval(() => {
+    fetch('/api/status').then((r) => r.json()).then((s: { deaths: number; online: number }) => showPacked(s.deaths, s.online)).catch(() => {});
+  }, 10_000);
+}
+function hidePacked(): void {
+  packedEl.hidden = true;
+  clearInterval(packedTimer);
+}
+
 function onEvent(e: ServerEvent): void {
   const now = performance.now() / 1000;
   switch (e.t) {
+    case 'packed':
+      showPacked(e.deaths, e.online);
+      break;
     case 'welcome':
+      hidePacked();
       deathCard = null; // a fresh connection starts clean; the next death brings a new card
       hud.deaths = e.deaths;
       hud.record = e.record;
       break;
-    case 'death':
+    case 'death': {
+      const wasPart = pressedRun === e.run;
+      if (wasPart) store.update((s) => noteDeath(s, e));
+      const recordAfter = !hud.record || e.progress > hud.record.progress ? { progress: e.progress, run: e.run } : hud.record;
+      deathCard = { run: e.run, progress: e.progress, cause: causeName(e.cause), nearRecord: e.nearRecord };
+      share.onDeath(e, store.stats, wasPart, { deathsBefore: hud.deaths, recordBefore: hud.record, recordAfter, card: deathCard });
       hud.deaths = e.deaths;
       hud.tickedAt = now;
-      deathCard = { run: e.run, progress: e.progress, cause: CAUSE_NAMES[e.cause] ?? e.cause, nearRecord: e.nearRecord };
-      announceEl.textContent = `Run ${e.run} made it ${Math.round(e.progress * 100)}% of the way. Deaths: ${e.deaths}.`;
+      announceEl.textContent = `Run ${e.run} made it ${Math.floor(e.progress * 100)}% of the way. Deaths: ${e.deaths}. Share button available.`;
       break;
+    }
     case 'record':
       hud.record = { progress: e.progress, run: e.run };
       break;
@@ -57,11 +96,26 @@ function onEvent(e: ServerEvent): void {
 }
 
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const net = connect(`${proto}://${location.host}/ws`, onEvent);
-const input = new InputState((bits) => net.sendInput(bits));
+const net = connect(`${proto}://${location.host}/ws`, onEvent, (f) => recorder.push(f));
+const input = new InputState((bits) => {
+  net.sendInput(bits);
+  if (bits) {
+    pressedRun = net.state.latest?.run ?? (net.state.welcome?.t === 'welcome' ? net.state.welcome.run : -1);
+    store.update((s) => notePlayed(s, dayKey(new Date())));
+    analytics.played();
+  }
+});
+const share = new ShareUI({
+  level, sceneLevel, recorder, siteUrl: SITE_URL,
+  onShare: (kind, how) => analytics.share(kind, how),
+  onOpen: () => input.releaseAll(),
+});
 
-// Keyboard
-addEventListener('keydown', (e) => { if (isGameKey(e.code)) { e.preventDefault(); input.key(e.code, true); } });
+// Keyboard (keys pressed on the share button or panel belong to them, not the blob)
+addEventListener('keydown', (e) => {
+  if (share.owns(e.target) || share.isOpen) return;
+  if (isGameKey(e.code)) { e.preventDefault(); input.key(e.code, true); }
+});
 addEventListener('keyup', (e) => { if (isGameKey(e.code)) { e.preventDefault(); input.key(e.code, false); } });
 // Never leave a button "held" when the player switches away (review focus 1).
 releaseWhenHidden(window, document, () => input.releaseAll());
@@ -131,8 +185,9 @@ function frame(): void {
 
   cam = camera(L, pos, cam, dt);
   renderFrame(view.ctx, L, cam, scene, t);
+  share.update(liveRenderer().deathCardBottom);
 
-  const msg = !net.state.connected ? 'Reconnecting to the blob…' : '';
+  const msg = !net.state.connected && packedEl.hidden ? 'Reconnecting to the blob…' : '';
   if (statusEl.textContent !== msg) { statusEl.textContent = msg; statusEl.classList.toggle('show', !!msg); }
   requestAnimationFrame(frame);
 }
