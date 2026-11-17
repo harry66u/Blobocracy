@@ -7,7 +7,8 @@ export const MSG_INPUT = 1, MSG_PING = 2, MSG_STATE = 10, MSG_PONG = 12;
 export const IN_LEFT = 1, IN_RIGHT = 2, IN_JUMP = 4;
 
 /** Per-slot crowd dot codes (2 bits each on the wire). */
-export const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2;
+/** Crowd slot codes: a present player pressing nothing / left / right, or an empty slot. */
+export const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2, DOT_EMPTY = 3;
 
 /** One authoritative world snapshot, broadcast at 20 Hz. */
 export interface StateFrame {
@@ -112,7 +113,6 @@ function decodeState(buf: ArrayBuffer): StateFrame | null {
   const jumpAt = STATE_HEADER + Math.ceil(n / 4);
   for (let i = 0; i < n; i++) {
     const dot = (u8[STATE_HEADER + (i >> 2)]! >> ((i & 3) * 2)) & 3;
-    if (dot > DOT_RIGHT) return null;
     dots[i] = dot;
     dotJump[i] = (u8[jumpAt + (i >> 3)]! >> (i & 7)) & 1;
   }

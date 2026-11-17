@@ -102,3 +102,16 @@ describe('server messages', () => {
     expect(decodeServer(bytes(MSG_PONG, 1, 2))).toBeNull();
   });
 });
+
+describe('empty crowd slots', () => {
+  test('DOT_EMPTY (3) round-trips so clients can tell an empty slot from an idle player', async () => {
+    const { DOT_EMPTY, encodeState, decodeServer } = await import('../src/protocol');
+    expect(DOT_EMPTY).toBe(3);
+    const dots = new Uint8Array([0, 1, 2, 3]);
+    const f = decodeServer(encodeState({
+      tick: 1, run: 1, x: 0, y: 0, vx: 0, vy: 0, grounded: true, facing: 1, phase: 'running',
+      pull: 0, pressure: 0, strain: 0, jumpHeld: false, online: 0, active: 0, dots, dotJump: new Uint8Array(4),
+    }).buffer) as { dots: Uint8Array };
+    expect([...f.dots]).toEqual([0, 1, 2, 3]);
+  });
+});

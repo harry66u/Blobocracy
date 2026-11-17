@@ -25,8 +25,8 @@ export function startLocalRelay(opts: { port: number; voters: Voters; world: Wor
   app.ws<SocketData>('/ws', {
     compression: uWS.DISABLED,
     maxPayloadLength: MAX_MESSAGE_BYTES, // bigger messages close the socket
-    maxBackpressure: 64 * 1024, // slow sockets skip frames instead of queueing stale ones
-    idleTimeout: 30,
+    maxBackpressure: 2048, // ~20 frames: slow sockets skip frames instead of queueing stale ones
+    idleTimeout: 12, // clients ping every 2 s; a silently dead phone loses its vote within ~12 s
     sendPingsAutomatically: true,
     upgrade: (res, req, context) => {
       res.upgrade<SocketData>(

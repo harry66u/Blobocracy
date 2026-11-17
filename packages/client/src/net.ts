@@ -12,6 +12,8 @@ export interface NetState {
 const BACKOFF_MIN_MS = 500;
 const BACKOFF_MAX_MS = 8000;
 const PING_EVERY_MS = 2000;
+/** Frames arrive 20 times a second; this much silence means the connection is dead even if no close came. */
+const SILENCE_MS = 3000;
 
 /** Opens the game socket and keeps it open: reconnects with backoff (0.5 s doubling to 8 s). */
 export function connect(url: string, onEvent: (e: ServerEvent) => void) {
@@ -21,6 +23,7 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
   let closed = false;
   let lastBits = 0;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
+  let lastHeard = 0;
 
   const open = () => {
     if (closed) return;
@@ -28,11 +31,17 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       state.connected = true;
+      lastHeard = performance.now();
       backoff = BACKOFF_MIN_MS;
       if (lastBits) ws!.send(encodeInput(lastBits)); // resume what the player is holding
-      pingTimer = setInterval(() => ws?.readyState === 1 && ws.send(encodePing(Math.floor(performance.now()) >>> 0)), PING_EVERY_MS);
+      pingTimer = setInterval(() => {
+        // Phones on cellular can lose the connection without any close event; notice the silence.
+        if (performance.now() - lastHeard > SILENCE_MS) { drop(); return; }
+        if (ws?.readyState === 1) ws.send(encodePing(Math.floor(performance.now()) >>> 0));
+      }, PING_EVERY_MS / 4);
     };
     ws.onmessage = (m) => {
+      lastHeard = performance.now();
       if (typeof m.data === 'string') {
         let e: ServerEvent;
         try { e = JSON.parse(m.data); } catch { return; }
@@ -45,13 +54,21 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
       if ('tick' in d) { state.latest = d; state.latestAt = performance.now(); }
       else state.rttMs = state.rttMs * 0.7 + ((Math.floor(performance.now()) >>> 0) - d.t) * 0.3;
     };
-    ws.onclose = () => {
-      state.connected = false;
-      clearInterval(pingTimer);
-      if (closed) return;
-      setTimeout(open, backoff);
-      backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
-    };
+    ws.onclose = () => drop();
+  };
+
+  /** Forget the current socket (closed or silently dead) and schedule a fresh one. */
+  const drop = () => {
+    if (!ws) return;
+    const dead = ws;
+    ws = null;
+    dead.onopen = dead.onmessage = dead.onclose = null;
+    try { dead.close(); } catch { /* already gone */ }
+    state.connected = false;
+    clearInterval(pingTimer);
+    if (closed) return;
+    setTimeout(open, backoff);
+    backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
   };
   open();
 
@@ -61,6 +78,6 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
       lastBits = bits;
       if (ws?.readyState === 1) ws.send(encodeInput(bits));
     },
-    close() { closed = true; ws?.close(); },
+    close() { closed = true; drop(); },
   };
 }

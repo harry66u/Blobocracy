@@ -1,8 +1,10 @@
 // The game page: connects to the shared world, sends this player's input, and draws
 // the server's blob with a little prediction so it feels responsive.
 import './fonts.css';
-import { LEVEL1, progressOf, tileAt, zoneAt, type ServerEvent } from '@blobocracy/shared';
+import { DOT_EMPTY, DOT_LEFT, DOT_RIGHT, LEVEL1, progressOf, tileAt, zoneAt, type ServerEvent } from '@blobocracy/shared';
 import { connect } from './net.ts';
+import { keepDeathCard } from './hudstate.ts';
+import { releaseWhenHidden } from './lifecycle.ts';
 import { InputState, isGameKey } from './input.ts';
 import { camera } from './layout.ts';
 import { predict, smooth } from './predict.ts';
@@ -31,6 +33,7 @@ function onEvent(e: ServerEvent): void {
   const now = performance.now() / 1000;
   switch (e.t) {
     case 'welcome':
+      deathCard = null; // a fresh connection starts clean; the next death brings a new card
       hud.deaths = e.deaths;
       hud.record = e.record;
       break;
@@ -61,10 +64,9 @@ const input = new InputState((bits) => net.sendInput(bits));
 addEventListener('keydown', (e) => { if (isGameKey(e.code)) { e.preventDefault(); input.key(e.code, true); } });
 addEventListener('keyup', (e) => { if (isGameKey(e.code)) { e.preventDefault(); input.key(e.code, false); } });
 // Never leave a button "held" when the player switches away (review focus 1).
-addEventListener('blur', () => input.releaseAll());
+releaseWhenHidden(window, document, () => input.releaseAll());
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) input.releaseAll();
-  else { pos = null; cam = null; } // snap to the latest frame on return
+  if (!document.hidden) { pos = null; cam = null; } // snap to the latest frame on return
 });
 mountTouchControls(document.body, input);
 
@@ -78,16 +80,11 @@ function sceneDots(d: Uint8Array, j: Uint8Array): SceneDot[] {
   dots.length = 0;
   for (let i = 0; i < d.length; i++) {
     const code = d[i]!;
-    const jump = j[i] === 1;
-    // Slots that are empty this frame have no player at all; skip them.
-    if (code === 0 && !jump && !occupied(i)) continue;
-    dots.push({ slot: i, dir: code === 1 ? -1 : code === 2 ? 1 : 0, jump });
+    if (code === DOT_EMPTY) continue; // nobody in this slot
+    dots.push({ slot: i, dir: code === DOT_LEFT ? -1 : code === DOT_RIGHT ? 1 : 0, jump: j[i] === 1 });
   }
   return dots;
 }
-// A slot counts as occupied once we've seen anyone in it; idle players keep floating.
-const seen = new Uint8Array(128);
-const occupied = (i: number) => seen[i] === 1;
 
 function frame(): void {
   const t = performance.now() / 1000;
@@ -104,7 +101,7 @@ function frame(): void {
     pos = pos ? smooth(pos, body, dt) : { x: body.x, y: body.y };
     blob = { x: pos.x, y: pos.y, vx: body.vx, vy: body.vy, grounded: body.grounded, facing: body.facing, pull: f.pull, strain: f.strain, dead: f.phase === 'dying' };
     online = f.online;
-    for (let i = 0; i < f.dots.length; i++) if (f.dots[i] !== 0 || f.dotJump[i]) seen[i] = 1;
+    if (!keepDeathCard(deathCard, f)) deathCard = null;
   } else {
     pos = pos ?? { x: level.spawn.x, y: level.spawn.y };
     blob = { x: pos.x, y: pos.y, vx: 0, vy: 0, grounded: true, facing: 1, pull: 0, strain: 0, dead: false };

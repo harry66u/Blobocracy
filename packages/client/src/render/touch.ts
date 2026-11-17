@@ -1,6 +1,7 @@
 // On-screen touch controls: three DOM <button>s styled like the mockup's cream discs.
 // Pointer events with hit-testing on pointermove, so two thumbs work at once and a
 // finger can slide from left to right without lifting. Shown only for coarse pointers.
+import { releaseWhenHidden } from '../lifecycle.ts';
 import type { TouchZone } from '../input.ts';
 import { INK, TOUCH_FILL } from './palette.ts';
 
@@ -156,7 +157,7 @@ export function mountTouchControls(
   window.addEventListener('pointermove', onMove, { passive: false });
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
-  window.addEventListener('blur', releaseAll);
+  const stopHide = releaseWhenHidden(window, document, releaseAll);
   layer.addEventListener('contextmenu', prevent);
   layer.addEventListener('touchstart', prevent, { passive: false });
   window.addEventListener('resize', placeButtons);
@@ -172,7 +173,7 @@ export function mountTouchControls(
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
-    window.removeEventListener('blur', releaseAll);
+    stopHide();
     window.removeEventListener('resize', placeButtons);
     window.removeEventListener('orientationchange', placeButtons);
     coarse.removeEventListener('change', placeButtons);

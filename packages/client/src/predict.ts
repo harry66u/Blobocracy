@@ -1,13 +1,24 @@
-import { BLEND, DT, stepBody, type Body, type Level, type StateFrame } from '@blobocracy/shared';
+import { BLEND, DT, PHYS, stepBody, type Body, type Level, type StateFrame } from '@blobocracy/shared';
 
 const MAX_AHEAD_S = 0.15;
 const SNAP_TILES = 3;
 const HALF_LIFE_S = 0.06;
 
+/** Frames carry float32 positions; snap values within this of a tile edge back onto it. */
+const SNAP = 1e-3;
+
+/** Undo float32 rounding: put a body resting on a tile edge exactly back on that edge. */
+function snapEdge(v: number, half: number): number {
+  for (const edge of [Math.round(v - half) + half, Math.round(v + half) - half]) {
+    if (Math.abs(v - edge) < SNAP) return edge;
+  }
+  return v;
+}
+
 /** Body state as carried by a server frame (no prediction). */
 export function bodyFromFrame(f: StateFrame): Body {
   return {
-    x: f.x, y: f.y, vx: f.vx, vy: f.vy, grounded: f.grounded, coyote: 0, buffer: 0,
+    x: snapEdge(f.x, PHYS.halfW), y: snapEdge(f.y, PHYS.halfH), vx: f.vx, vy: f.vy, grounded: f.grounded, coyote: 0, buffer: 0,
     rising: f.vy < 0 && f.jumpHeld, prevJumpHeld: f.jumpHeld, facing: f.facing, landed: 0,
   };
 }

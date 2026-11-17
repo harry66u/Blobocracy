@@ -1,7 +1,7 @@
 import { ACTIVE_WINDOW_S, BLEND, SAMPLE_SLOTS, type VoteCounts } from '@blobocracy/shared';
 
 const IN_LEFT = 1, IN_RIGHT = 2, IN_JUMP = 4;
-const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2;
+const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2, DOT_EMPTY = 3;
 
 interface Voter { bits: number; changedAt: number; jumpAt: number; everPressed: boolean; slot: number }
 
@@ -63,7 +63,7 @@ export class Voters {
     for (let i = 0; i < SAMPLE_SLOTS; i++) {
       const id = this.slots[i];
       const v = id == null ? undefined : this.voters.get(id);
-      if (!v) { this.dots[i] = DOT_NONE; this.dotJump[i] = 0; continue; }
+      if (!v) { this.dots[i] = DOT_EMPTY; this.dotJump[i] = 0; continue; }
       const l = v.bits & IN_LEFT, r = v.bits & IN_RIGHT;
       this.dots[i] = l && !r ? DOT_LEFT : r && !l ? DOT_RIGHT : DOT_NONE;
       this.dotJump[i] = v.bits & IN_JUMP ? 1 : 0;

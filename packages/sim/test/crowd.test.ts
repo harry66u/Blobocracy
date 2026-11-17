@@ -92,4 +92,14 @@ describe('Voters', () => {
     v.setInput(2, R, 0.5); // release keeps it out of fresh
     expect(v.counts(0.5).fresh).toBe(0);
   });
+
+  test('empty slots are DOT_EMPTY, including a slot freed by someone leaving', () => {
+    const v = new Voters();
+    v.join(1); v.join(2);
+    const slot = v.slotOf(2);
+    expect(v.sample().dots[SAMPLE_SLOTS - 1]).toBe(3);
+    v.leave(2);
+    expect(v.sample().dots[slot]).toBe(3);
+    expect(v.sample().dots[v.slotOf(1)]).toBe(0); // present but idle
+  });
 });

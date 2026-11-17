@@ -43,3 +43,28 @@ describe('smooth', () => {
     expect(p.x).toBeCloseTo(1, 2);
   });
 });
+
+describe('predict from real (float32) frames', () => {
+  // Wall at column 10 rising from the floor; the blob rests against it.
+  const wallRows = Array.from({ length: 18 }, (_, r) =>
+    r === 12 ? '.@........#.........G' : r >= 13 ? '#'.repeat(21) : r >= 9 ? '..........#..........' : '.'.repeat(21));
+  const WALL = parseLevel(2, 1, [{ name: 'wall', sky: 'blue', rooms: [wallRows] }]);
+
+  test('a blob resting against a wall with no pull stays put after a wire round trip', async () => {
+    const { encodeState, decodeServer, PHYS } = await import('@blobocracy/shared');
+    const f = frame({ x: 10 - PHYS.halfW, y: 13 - PHYS.halfH, vx: 0, pull: 0, jumpHeld: true });
+    for (const x of [10 - PHYS.halfW, 10 - PHYS.halfW - 4e-7, 10 - PHYS.halfW + 1e-6]) {
+      const wire = decodeServer(encodeState({ ...f, x }).buffer) as StateFrame;
+      const b = predict(wire, WALL, 0.1);
+      expect(Math.abs(b.y - (13 - PHYS.halfH))).toBeLessThan(0.05);
+      expect(Math.abs(b.x - x)).toBeLessThan(0.05);
+    }
+  });
+
+  test('a running blob is not pushed backwards after a wire round trip', async () => {
+    const { encodeState, decodeServer, PHYS } = await import('@blobocracy/shared');
+    const f = frame({ x: 5.5, y: 13 - PHYS.halfH + 3e-7, vx: 7, pull: 1 });
+    const wire = decodeServer(encodeState(f).buffer) as StateFrame;
+    expect(predict(wire, LEVEL, 0.1).x).toBeGreaterThan(5.5 + 0.6);
+  });
+});

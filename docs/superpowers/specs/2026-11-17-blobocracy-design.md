@@ -178,11 +178,15 @@ Inputs come only from **active voters**: players who pressed something in the la
 
 **Lone players (client's decision).** A single active player has full control at any hour, including the power to end a deep run. That is part of the comedy; late-night solo heroes can also make real progress.
 
-**Horizontal pull**: `pull = (R − L) / max(A, 1)`, where R and L are weighted counts of players holding right and left (holding both counts as neither) and A is the weighted count of active voters. Active voters who aren't pressing a direction count as votes to stand still, so a crowd that half-agrees moves at half speed. Target speed = `runSpeed × pull`, approached with acceleration, so the blob has a little inertia. Two players pushing opposite ways make the blob strain in place, eyes darting between them (funny). One player has full control. At 20,000, the law of large numbers makes the pull smooth, so the chaos is about agreement, not noise.
+**Horizontal pull**: `pull = (R − L) / max(A, 1)`, where R and L are weighted counts of players holding right and left (holding both counts as neither) and A is the weighted count of active voters. Active voters who aren't pressing a direction count as votes to stand still. Target speed = `runSpeed × sign(pull) × |pull|^0.6`, approached with acceleration, so the blob has a little inertia. The response curve (found in milestone 1 playtesting) makes a mostly-agreeing crowd feel decisive: half the crowd agreeing moves at about two thirds speed, because at half speed every jump fell short and even easy gaps were deadly. Two players pushing opposite ways make the blob strain in place, eyes darting between them (funny). One player has full control. At 20,000, the law of large numbers makes the pull smooth, so the chaos is about agreement, not noise.
 
 **Tug-of-war wobble**: when both L and R are large (strong disagreement), the blob visibly strains and squashes, with a small speed penalty. This is purely a readability and comedy feature.
 
 **Jump**: jump pressure = `J / max(A, 1)`, the weighted share of active voters holding jump. A jump starts when the blob can jump (grounded or within coyote time) and pressure crosses the jump threshold (default 30%, or any single press when there is only one active voter). It is buffered for 150 ms. While rising, if pressure drops below the release threshold (15%), upward velocity is cut, so **the crowd controls jump height by how long it holds**. Short hops need the crowd to let go together.
+
+**Fresh bursts** (milestone 1 playtesting): a crowd almost never lets go together, so with only the rule above, a second jump was impossible while stragglers still held the button. So a jump also fires when a fresh burst arrives: at least 30% of active voters started pressing jump within the last 0.25 s. The burst signal uses the same hysteresis (it re-arms once the fresh share drops below 15%), so a burst hovering near the threshold fires once.
+
+**Pit deaths** happen when the blob's center sinks 2.5 rows above the bottom of the level, while it is still on screen, so the death freeze shows it.
 
 All constants are config, tuned in milestone 2 with simulated crowds at 2, 20, 200 and 20,000 players.
 
