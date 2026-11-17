@@ -1,28 +1,33 @@
 // The game page: connects to the shared world, sends this player's input, and draws
 // the server's blob with a little prediction so it feels responsive. The big moments
-// (death, new zone, passing the record) are choreographed by the Director and the
-// CameraRig; sound comes from the synthesized GameAudio module.
+// (death, new zone, passing the record, the win and the level-up) are choreographed by
+// the Director and the CameraRig; sound comes from the synthesized GameAudio module.
 import { createGameAudio } from './audio/index.ts';
 import './fonts.css';
-import { LEVEL1, progressOf, type ServerEvent } from '@blobocracy/shared';
+import { progressOf, zoneAt, type ServerEvent } from '@blobocracy/shared';
 import { CameraRig } from './camera.ts';
 import { Director } from './director.ts';
 import { connect } from './net.ts';
 import { keepDeathCard } from './hudstate.ts';
 import { releaseWhenHidden } from './lifecycle.ts';
 import { InputState, isGameKey } from './input.ts';
-import { causeName, DEATH_SHAKE, swoopDuration } from './moments.ts';
+import { causeName, DEATH_SHAKE, levelUpFrame, swoopDuration } from './moments.ts';
+import { hudLevelLabel, levelView, type LevelView } from './levels.ts';
+import { LevelUpView } from './render/levelup.ts';
 import { predict, smooth } from './predict.ts';
 import { mountTouchControls } from './render/touch.ts';
-import { deathCardShareSlot, renderFrame, type Scene, type SceneDot } from './render/scene.ts';
+import { deathCardShareSlot, renderFrame, resetRenderer, type Scene, type SceneDot } from './render/scene.ts';
+import { winCardShareSlot } from './render/frame.ts';
 import { ClipBook, mountShareButton, withClip } from './share.ts';
-import { composeScene, sceneBlob, sceneDots, sceneLevelOf, WorldSounds } from './scenemap.ts';
+import { composeScene, sceneBlob, sceneDots } from './scenemap.ts';
 import { loadMuted, loadReducedMotion, mountHudControls, saveMuted, saveReducedMotion } from './settings.ts';
 import { createCanvasView, loadFonts } from './view.ts';
 
-const level = LEVEL1;
-// One SceneLevel object for the whole session: the renderer caches level chunks per object.
-const sceneLevel = sceneLevelOf(level);
+// The level being played: one SceneLevel per level for the whole session (the renderer caches
+// level chunks per object), swapped when the world moves on after a win.
+let lv: LevelView = levelView(1)!;
+let level = lv.level;
+let encore = false;
 
 const statusEl = document.getElementById('status')!;
 const announceEl = document.getElementById('announce')!;
@@ -32,7 +37,6 @@ const loadingDeathsEl = document.getElementById('loading-deaths');
 let reduced = loadReducedMotion();
 let muted = loadMuted();
 const audio = createGameAudio();
-const sounds = new WorldSounds(LEVEL1);
 audio.setMuted(muted);
 
 const announce = (text: string) => { announceEl.textContent = text; };
@@ -44,6 +48,20 @@ const director = new Director(() => reduced, {
 });
 const rig = new CameraRig();
 const clips = new ClipBook();
+const levelUp = new LevelUpView();
+
+/** Switch to the level with this id (a welcome or a level event). Returns whether it changed. */
+function useLevel(id: number, isEncore: boolean): boolean {
+  const v = levelView(id);
+  encore = isEncore;
+  if (!v || v === lv) return false;
+  lv = v;
+  level = v.level;
+  pos = null;
+  rig.snap();
+  resetRenderer();
+  return true;
+}
 
 /** The death being shown: the cause picks the blob's pose; null when not dying. */
 let deathCause: string | null = null;
@@ -56,12 +74,28 @@ function onEvent(e: ServerEvent): void {
   const now = performance.now() / 1000;
   switch (e.t) {
     case 'welcome':
+      if (useLevel(e.levelId, e.encore ?? false) && !levelUp.ready) audio.setZone(0);
       director.welcome(e);
       deathCause = null;
       cardRun = null;
       if (loadingDeathsEl) loadingDeathsEl.textContent = `${e.deaths.toLocaleString('en-US')} deaths so far`;
       audio.setZone(e.zone);
       break;
+    case 'win':
+      director.onWin(e, now);
+      deathCause = null;
+      cardRun = null;
+      audio.win();
+      break;
+    case 'level': {
+      // the beaten level shrinks away as a snapshot; the new one slides in
+      const old = lv;
+      levelUp.capture(view.ctx.canvas, encore ? `Encore: ${old.name}` : `Level ${old.level.id}: ${old.name}`);
+      useLevel(e.levelId, e.encore);
+      director.onLevel(e, now);
+      audio.levelUp();
+      break;
+    }
     case 'death':
       director.onDeath(e, now);
       deathCause = e.cause;
@@ -132,6 +166,7 @@ document.addEventListener('visibilitychange', () => {
 });
 mountTouchControls(document.body, input);
 const share = mountShareButton(document.body);
+const winShare = mountShareButton(document.body);
 
 let pos: { x: number; y: number } | null = null;
 let lastT = performance.now() / 1000;
@@ -161,14 +196,17 @@ function frame(): void {
     const body = predict(f, level, ahead);
     // Hazards keep moving between frames while the run is running.
     runTime = f.phase === 'running' ? f.runTime + Math.max(0, ahead) : f.runTime;
+    const prevX = pos?.x;
     pos = pos ? smooth(pos, body, dt) : { x: body.x, y: body.y };
+    // a jump across the level that isn't the swoop back to the start (e.g. the admin debug win): cut, don't crawl
+    if (prevX !== undefined && Math.abs(pos.x - prevX) > 24 && rig.swoopK === null) { rig.snap(); resetRenderer(); }
     const dead = f.phase === 'dying';
     blob = sceneBlob(pos, body, f, deathCause);
     online = f.online;
     // World sounds: saws buzz when close, presses slam, crumbles crack, the crowd hums.
-    sounds.world(f, pos, runTime, audio);
+    lv.sounds.world(f, pos, runTime, audio);
     if (!keepDeathCard(cardRun === null ? null : { run: cardRun }, f)) { cardRun = null; deathCause = dead ? deathCause : null; }
-    sounds.body(f, body, audio);
+    lv.sounds.body(f, body, audio);
   } else {
     pos = pos ?? { x: level.spawn.x, y: level.spawn.y };
     blob = { x: pos.x, y: pos.y, vx: 0, vy: 0, grounded: true, facing: 1, pull: 0, strain: 0, dead: false };
@@ -178,7 +216,8 @@ function frame(): void {
   const progress = progressOf(level, blob.x);
   const d = director.frame(t, f?.run ?? 0, progress, running);
 
-  // camera: follow with look-ahead, or swoop back to the start after a death
+  // camera: follow with look-ahead, or swoop back to the start after a death; framed for the party while celebrating
+  rig.celebrate(f?.phase === 'celebrating', L.phone);
   let cam = rig.update(L, blob, dt, reduced);
   const swoopK = rig.swoopK;
   const shake = rig.shakeOffset();
@@ -188,7 +227,9 @@ function frame(): void {
 
   const bits = input.bits;
   const scene: Scene = composeScene({
-    level, sceneLevel, frame: f, blob, runTime, online, muted, reduced, progress,
+    level, sceneLevel: lv.sceneLevel, frame: f, blob, runTime, online, muted, reduced, progress,
+    levelLabel: hudLevelLabel(level.id, encore), encore, levelName: lv.name, nextLevel: encore ? null : lv.next,
+    winClip: d.win ? clips.forRun(d.win.run) !== null : false,
     dots: f ? sceneDots(f.dots, f.dotJump, dots) : [],
     you: { dir: (bits & 1) && !(bits & 2) ? -1 : (bits & 2) && !(bits & 1) ? 1 : 0, jump: (bits & 4) !== 0 },
     director: d,
@@ -198,10 +239,19 @@ function frame(): void {
   scene.deathCard = withClip(scene.deathCard, clips);
 
   // While the death card is up inputs don't count; fade the touch buttons so a pit death stays visible.
-  document.body.classList.toggle('bl-dying', blob.dead);
+  // (the celebration ignores inputs too)
+  document.body.classList.toggle('bl-dying', blob.dead || f?.phase === 'celebrating' || (d.levelUp !== null && d.levelUp.age < 3));
 
-  renderFrame(view.ctx, L, cam, scene, t);
+  if (d.levelUp && levelUp.ready) {
+    const lf = levelUpFrame(d.levelUp.age, reduced);
+    levelUp.draw(view.ctx, L, lf, d.levelUp, zoneAt(level, level.spawn.x).sky, reduced, t, (g) => renderFrame(g, L, cam, scene, t));
+    if (lf.done) levelUp.end();
+  } else {
+    if (levelUp.ready) levelUp.end();
+    renderFrame(view.ctx, L, cam, scene, t);
+  }
   share.place(deathCardShareSlot(), cardRun !== null ? clips.forRun(cardRun) : null);
+  winShare.place(d.win ? winCardShareSlot() : null, d.win ? clips.forRun(d.win.run) : null);
   audio.tick();
 
   const msg = !net.state.connected && loadingGone ? 'Reconnecting to the blob…' : '';

@@ -3,7 +3,8 @@
 import { DOT_EMPTY, DOT_LEFT, DOT_RIGHT, tileAt, zoneAt, type Body, type Level, type StateFrame } from '@blobocracy/shared';
 import { AudioCues } from './audiocues.ts';
 import type { DirectorFrame } from './director.ts';
-import type { Scene, SceneBlob, SceneCrumble, SceneDot, SceneLevel } from './render/scene.ts';
+import { winFx } from './moments.ts';
+import type { Scene, SceneBlob, SceneCrumble, SceneDot, SceneLevel, SceneWin } from './render/scene.ts';
 
 /** One SceneLevel per level: the renderer caches level chunks per object, so keep it. */
 export function sceneLevelOf(level: Level): SceneLevel {
@@ -13,6 +14,7 @@ export function sceneLevelOf(level: Level): SceneLevel {
     tileAt: (tx, ty) => tileAt(level, tx, ty),
     zones: level.zones,
     entities: level.entities,
+    goalX: level.goalX,
   };
 }
 
@@ -37,7 +39,11 @@ export function sceneCrumbles(f: StateFrame, level: Level): SceneCrumble[] {
 /** The blob as drawn: smoothed position, the frame's crowd pull and strain, and the death pose. */
 export function sceneBlob(pos: { x: number; y: number }, body: Body, f: StateFrame, deathCause: string | null): SceneBlob {
   const dead = f.phase === 'dying';
-  return { x: pos.x, y: pos.y, vx: body.vx, vy: body.vy, grounded: body.grounded, facing: body.facing, pull: f.pull, strain: f.strain, dead, deathCause: dead ? deathCause : null };
+  const joy = f.phase === 'celebrating';
+  return {
+    x: pos.x, y: pos.y, vx: body.vx, vy: body.vy, grounded: body.grounded, facing: body.facing, pull: f.pull, strain: f.strain, dead, deathCause: dead ? deathCause : null,
+    ...(joy ? { joy, crown: 1 } : {}),
+  };
 }
 
 export interface SceneParts {
@@ -63,6 +69,14 @@ export interface SceneParts {
   swoopFromProgress: number;
   /** The blob's run progress. */
   progress: number;
+  /** "Level 2" by the counter (null on level 1), and whether this is an encore. */
+  levelLabel?: string | null;
+  encore?: boolean;
+  /** The level's name and the next level, for the win card. */
+  levelName?: string;
+  nextLevel?: { levelId: number; name: string } | null;
+  /** The win clip exists (the card shows "Share the clip"). */
+  winClip?: boolean;
 }
 
 /** Assembles the Scene the renderer draws. */
@@ -71,9 +85,20 @@ export function composeScene(p: SceneParts): Scene {
   // during the swoop the progress marker slides back and the sky rewinds with the camera
   const shownProgress = swoopK === null ? p.progress : p.swoopFromProgress + (p.progress - p.swoopFromProgress) * swoopK;
   const skyX = swoopK === null ? p.blob.x : p.viewCenterX;
+  let blob = p.blob;
+  let win: SceneWin | null = null;
+  if (d.win) {
+    const wf = winFx(d.win.age, reduced);
+    blob = { ...blob, joy: true, crown: wf.crown };
+    win = {
+      age: d.win.age, levelId: d.win.levelId, run: d.win.run, deaths: d.win.deaths, durationS: d.win.durationS, peakPlayers: d.win.peakPlayers,
+      name: p.levelName ?? `Level ${d.win.levelId}`, next: p.nextLevel ?? null, encore: p.encore ?? false, clip: p.winClip ?? false,
+    };
+  }
   return {
     level: p.sceneLevel,
-    blob: p.blob,
+    blob,
+    win,
     dots: p.dots,
     you: p.you,
     hud: {
@@ -85,6 +110,9 @@ export function composeScene(p: SceneParts): Scene {
       recordLabel: d.recordLabel,
       recordPop: d.recordPop,
       muted: p.muted,
+      levelLabel: p.levelLabel ?? null,
+      encore: p.encore ?? false,
+      cascade: d.cascade,
     },
     deathCard: p.showCard ? d.card : null,
     zoneSky: zoneAt(level, skyX).sky,
@@ -101,6 +129,7 @@ export function composeScene(p: SceneParts): Scene {
       banner: d.banner,
       recordFlag: d.flagProgress === null ? null : { x: progressX(level, d.flagProgress), label: `${Math.round(d.flagProgress * 100)}%` },
       skyRate: swoopK !== null ? (reduced ? 50 : 3.5) : reduced ? 0.6 : 1,
+      timeScale: d.timeScale,
     },
   };
 }

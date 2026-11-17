@@ -1,4 +1,4 @@
-import { CLIP_ID_RE, deathSentence, progressOf, type Level } from '@blobocracy/shared';
+import { CLIP_ID_RE, deathSentence, levelTitle, progressOf, trackId, trackOf, type Level } from '@blobocracy/shared';
 import type uWS from 'uWebSockets.js';
 import { PENDING_WAIT_MS, type History } from './history';
 import { clipMeta, type ClipRow, type RunRow, type Store } from './store';
@@ -7,20 +7,29 @@ import { clipMeta, type ClipRow, type RunRow, type Store } from './store';
  * The public read API (spec §12 pages), served by the sim's internal HTTP port; edges proxy
  * `/api/*` to it and cache the answers (see packages/edge/src/api.ts).
  *   GET /api/counter                 deaths, run, record, online
- *   GET /api/summary                 the chart and the header of /runs
- *   GET /api/runs?page=1&best=1      run history, 25 a page (best: furthest first)
- *   GET /api/hall                    beaten levels (and the current level for the empty state)
+ *   GET /api/levels                  the levels so far (track ids for ?level=), which is current, which are beaten
+ *   GET /api/summary?level=<track>   the chart and the header of /runs (default: the current level)
+ *   GET /api/runs?page=1&best=1&level=<track>  run history, 25 a page (best: furthest first)
+ *   GET /api/hall                    beaten levels, the current level (empty state), and whether a new level is coming
  *   GET /api/clips/<id>              the packed replay (binary, immutable)
  *   GET /api/clips/<id>/meta         what the clip is about (for link previews)
  *   GET /api/clips/<id>/og.png       its link-preview image
  */
 export interface ApiResponse { status: number; type: string; body: string | Uint8Array; cache: string }
 
+/** The level being played: its geometry, display name, and whether it is an encore. */
+export interface CurrentLevel { level: Level; name: string; encore: boolean }
+
 export interface ApiDeps {
   store: Store;
+  /** The level when there is only one (tests); `current` wins when given. */
   level: Level;
   history?: History | null;
   levelName: string;
+  /** The level being played right now (it changes after a win). */
+  current?: () => CurrentLevel;
+  /** Every built level in order (default [level]). */
+  levels?: readonly Level[];
   counter: () => { deaths: number; run: number; record: { progress: number; run: number } | null; online: number };
   /** Chart points at most (runs are bucketed past this). */
   maxPoints?: number;
@@ -44,6 +53,8 @@ export const runJson = (r: RunRow) => ({
   progress: r.maxProgress, zone: r.zoneReached, cause: r.cause, peakPlayers: r.peakPlayers, clipId: r.clipId,
 });
 
+const ENCORE_SUFFIX = ' · Encore';
+
 /** "Run 4,812 made it 78%…" — the link-preview title of a clip. */
 export function clipTitle(c: Pick<ClipRow, 'kind' | 'run' | 'progress'>): string {
   const run = `Run ${c.run.toLocaleString('en-US')}`;
@@ -52,29 +63,74 @@ export function clipTitle(c: Pick<ClipRow, 'kind' | 'run' | 'progress'>): string
   return c.kind === 'record' ? `New record! ${run} made it ${pct}…` : `So close. ${run} made it ${pct}…`;
 }
 
+/** A clip still being made after the wait: try again shortly (never cached, so the edge asks again). */
+const MAKING = (): ApiResponse => ({ status: 503, type: 'application/json', body: JSON.stringify({ error: 'This clip is still being made.', making: true }), cache: 'no-store' });
+/** The longest the API holds one request for a clip being made; past it the client retries. */
+const MAX_HOLD_MS = 10_000;
+
 export function createApi(d: ApiDeps) {
   const maxPoints = d.maxPoints ?? 2400;
+  const levels = d.levels?.length ? d.levels : [d.level];
+  const cur = (): CurrentLevel => d.current?.() ?? { level: d.level, name: d.levelName, encore: false };
+  const curTrack = () => { const c = cur(); return trackId(c.level.id, c.encore); };
+  const nameOf = (level: Level, encore: boolean) => (cur().level.id === level.id && !d.current ? d.levelName : levelTitle(level)) + (encore ? ENCORE_SUFFIX : '');
 
-  async function clip(id: string): Promise<ClipRow | null> {
+  /** The track a ?level= asks for: a known level (or its encore), else the current one. */
+  function trackParam(v: string | null): { track: number; level: Level; encore: boolean } {
+    const n = v === null || v === '' ? NaN : Number(v);
+    if (Number.isInteger(n)) {
+      const t = trackOf(n);
+      const level = levels.find((l) => l.id === t.levelId);
+      if (level) return { track: n, level, encore: t.encore };
+    }
+    const c = cur();
+    return { track: curTrack(), level: c.level, encore: c.encore };
+  }
+
+  /** Deaths and record of a track: live for the current one, else from storage. */
+  async function countersOf(track: number) {
+    const c = d.counter();
+    if (track === curTrack()) return c;
+    const w = await d.store.loadWorld(track);
+    return { deaths: w?.deaths ?? 0, run: (w?.deaths ?? 0) + 1, record: w?.record ? { progress: w.record.progress, run: w.record.run } : null, online: c.online };
+  }
+
+  async function clip(id: string): Promise<ClipRow | null | 'making'> {
     const c = await d.store.getClip(id);
     if (c) return c;
-    // made right now (reserved at the death, saved when the run resets): wait for it
+    // made right now (reserved at the death or the win, saved when the run resets or the celebration ends): wait for it
     const making = d.history?.whenMade(id);
     if (!making) return null;
-    return Promise.race([making, new Promise<null>((r) => setTimeout(() => r(null), PENDING_WAIT_MS))]);
+    const wait = Math.min(MAX_HOLD_MS, d.history?.waitMs(id) ?? PENDING_WAIT_MS);
+    return Promise.race([making, new Promise<'making'>((r) => setTimeout(() => r('making'), wait))]);
   }
 
   async function route(path: string, q: URLSearchParams): Promise<ApiResponse> {
     if (path === '/api/counter') {
-      const c = d.counter();
-      return json(200, c, 'public, max-age=5');
+      const c = d.counter(), now = cur();
+      return json(200, { ...c, levelId: now.level.id, encore: now.encore }, 'public, max-age=5');
+    }
+    if (path === '/api/levels') {
+      const [hall] = await Promise.all([d.store.hallOfFame()]);
+      const beaten = new Set(hall.map((h) => h.levelId));
+      const now = curTrack();
+      const curIdx = levels.findIndex((l) => l.id === cur().level.id);
+      const out = levels.filter((_, i) => i <= curIdx || beaten.has(levels[i]!.id))
+        .map((l) => ({ track: l.id, levelId: l.id, name: nameOf(l, false), encore: false, beaten: beaten.has(l.id), current: now === l.id }));
+      const last = levels[levels.length - 1]!;
+      const encoreTrack = trackId(last.id, true);
+      if (now === encoreTrack || beaten.has(encoreTrack)) {
+        out.push({ track: encoreTrack, levelId: last.id, name: nameOf(last, true), encore: true, beaten: beaten.has(encoreTrack), current: now === encoreTrack });
+      }
+      return json(200, { current: now, levels: out }, 'public, max-age=10');
     }
     if (path === '/api/summary') {
-      const s = await d.store.summary(d.level.id, maxPoints, d.level.zones.length);
-      const c = d.counter();
+      const t = trackParam(q.get('level'));
+      const L = t.level;
+      const [s, c] = await Promise.all([d.store.summary(t.track, maxPoints, L.zones.length), countersOf(t.track)]);
       return json(200, {
-        levelId: d.level.id, levelName: d.levelName, ...c, attempts: s.attempts,
-        zones: d.level.zones.map((z) => ({ index: z.index, name: z.name, sky: z.sky, start: progressOf(d.level, z.startX) })),
+        levelId: L.id, track: t.track, encore: t.encore, current: t.track === curTrack(), levelName: nameOf(L, t.encore), ...c, attempts: s.attempts,
+        zones: L.zones.map((z) => ({ index: z.index, name: z.name, sky: z.sky, start: progressOf(L, z.startX) })),
         zoneReach: s.zoneReach, series: s.series, bucket: s.bucket, records: s.records, firstAt: s.firstAt, lastAt: s.lastAt,
       }, 'public, max-age=10');
     }
@@ -82,22 +138,41 @@ export function createApi(d: ApiDeps) {
       const page = intParam(q.get('page'), 1, 1, 100_000);
       const pageSize = intParam(q.get('size'), PAGE_SIZE, 1, 100);
       const best = truthy(q.get('best'));
-      const r = await d.store.listRuns({ levelId: d.level.id, page, pageSize, best });
-      return json(200, { page: r.page, pages: r.pages, pageSize: r.pageSize, total: r.total, best, record: d.counter().record, runs: r.runs.map(runJson) }, 'public, max-age=5');
+      const t = trackParam(q.get('level'));
+      const [r, c] = await Promise.all([d.store.listRuns({ levelId: t.track, page, pageSize, best }), countersOf(t.track)]);
+      return json(200, { track: t.track, page: r.page, pages: r.pages, pageSize: r.pageSize, total: r.total, best, record: c.record, runs: r.runs.map(runJson) }, 'public, max-age=5');
     }
     if (path === '/api/hall') {
-      const entries = await d.store.hallOfFame();
+      const rows = await d.store.hallOfFame();
       const c = d.counter();
-      return json(200, { entries, current: { levelId: d.level.id, name: d.levelName, deaths: c.deaths, record: c.record } }, 'public, max-age=10');
+      const now = cur();
+      const entries = rows.map((h) => {
+        const t = trackOf(h.levelId);
+        return { ...h, levelId: t.levelId, track: h.levelId, encore: t.encore };
+      });
+      const last = levels[levels.length - 1]!;
+      const idx = levels.findIndex((l) => l.id === now.level.id);
+      const next = idx >= 0 && idx + 1 < levels.length ? levels[idx + 1]! : null;
+      return json(200, {
+        entries,
+        current: { levelId: now.level.id, name: now.name, deaths: c.deaths, record: c.record, encore: now.encore },
+        next: next ? { levelId: next.id, name: levelTitle(next) } : null,
+        // the last built level has fallen: the hall says a new level is coming (spec §6.7)
+        comingSoon: rows.some((h) => h.levelId === last.id),
+      }, 'public, max-age=10');
     }
     const m = path.match(/^\/api\/clips\/([^/]+)(\/meta|\/og\.png)?$/);
     if (m) {
       const id = m[1]!;
       if (!CLIP_ID_RE.test(id)) return notFound();
       const c = await clip(id);
+      if (c === 'making') return MAKING();
       if (!c) return notFound();
       if (m[2] === '/meta') {
-        return json(200, { ...clipMeta(c), title: clipTitle(c), description: deathSentence(c.run, c.progress, c.cause) }, 'public, max-age=300');
+        const description = c.kind === 'win'
+          ? `Run ${c.run.toLocaleString('en-US')} made it all the way after ${c.deaths.toLocaleString('en-US')} deaths. Everyone online steered one blob.`
+          : deathSentence(c.run, c.progress, c.cause);
+        return json(200, { ...clipMeta(c), title: clipTitle(c), description }, 'public, max-age=300');
       }
       if (m[2] === '/og.png') {
         return c.og ? { status: 200, type: 'image/png', body: c.og, cache: IMMUTABLE } : notFound();

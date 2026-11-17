@@ -100,6 +100,19 @@ export class HudView {
     const fontSmall = `600 ${fs.toFixed(1)}px ${FONT_TEXT}`;
     const y1 = top + fsBig * 0.36, y2 = y1 + fs * 1.45;
     ctx.textBaseline = 'alphabetic';
+    // light text (night skies) gets a soft dark halo, so it still reads over cream ground and walls
+    const light = pal.stars > 0.5;
+    const fill = (text: string, x: number, y: number) => {
+      if (light) {
+        ctx.save();
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 4 * s;
+        ctx.strokeStyle = 'rgba(42,27,61,.55)';
+        ctx.strokeText(text, x, y);
+        ctx.restore();
+      }
+      ctx.fillText(text, x, y);
+    };
 
     // players online
     const online = fmt(hud.online);
@@ -113,10 +126,10 @@ export class HudView {
     ctx.textAlign = 'left';
     ctx.font = fontBig;
     ctx.fillStyle = pal.hud;
-    ctx.fillText(online, pad + 16 * s, y1);
+    fill(online, pad + 16 * s, y1);
     ctx.font = fontSmall;
     ctx.fillStyle = pal.hudSoft;
-    ctx.fillText('playing now', pad, y2);
+    fill('playing now', pad, y2);
     const leftW = Math.max(16 * s + this.measure(ctx, fontBig, online), this.measure(ctx, fontSmall, 'playing now'));
 
     // record
@@ -132,10 +145,10 @@ export class HudView {
     ctx.textAlign = 'right';
     ctx.font = fontBig;
     ctx.fillStyle = pal.hud;
-    ctx.fillText(line1, rx, y1);
+    fill(line1, rx, y1);
     ctx.font = fontSmall;
     ctx.fillStyle = pal.hudSoft;
-    if (line2) ctx.fillText(line2, rx, y2);
+    if (line2) fill(line2, rx, y2);
     const rightW = Math.max(this.measure(ctx, fontBig, line1), line2 ? this.measure(ctx, fontSmall, line2) : 0);
     const pop = hud.recordPop;
     if (pop !== null && pop !== undefined && pop >= 0 && pop < RECORD_POP_S) this.recordSticker(ctx, rx, phone ? 128 * s : y2 + 26 * s, s * (phone ? 0.9 : 1), pop);
@@ -214,6 +227,9 @@ export class HudView {
     const ft = timeS - this.flipT0;
     const lit = hud.deathsJustTicked;
     const chars = str;
+    const cascade = hud.cascade ?? null;
+    let digitIndex = 0;
+    const x0Cards = x;
     const oldStr = this.prevStr;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
@@ -231,13 +247,16 @@ export class HudView {
       const f = (this.flipMask >> fromEnd) & 1 ? flipFrame(ft, this.reduced) : null;
       const flipping = f !== null && !f.done;
       const oldC = oldStr.length === str.length ? oldStr[i] ?? c : ' ';
-      const newFill = isLast && lit ? BLOB : CREAM;
+      // the win: a wave of hops runs across the cards, each lighting up gold as it jumps
+      const wave = cascade === null ? 0 : cascadeHop(cascade - digitIndex * 0.09);
+      digitIndex++;
+      const newFill = (isLast && lit) || wave > 0.05 ? BLOB : CREAM;
       // shadow stays put; the card bounces above it as the flap lands
       ctx.fillStyle = INK;
       ctx.beginPath();
       ctx.roundRect(x, y + 5 * s, cw, ch, r);
       ctx.fill();
-      const lift = f ? -f.bounce * ch * 0.4 : 0;
+      const lift = (f ? -f.bounce * ch * 0.4 : 0) - (this.reduced ? 0 : wave * ch * 0.38);
       const card: FlapCard = { x, y: y + lift, cw, ch, r, s, font: fontDigit, fs };
       if (!flipping) {
         flapHalf(ctx, card, 'top', c, newFill, 1, 0);
@@ -290,9 +309,58 @@ export class HudView {
       x += cw + gap;
     }
     ctx.textAlign = 'center';
-    ctx.font = `700 ${((phone ? 13 : 16) * s0).toFixed(1)}px ${FONT_TEXT}`;
-    ctx.fillStyle = pal.hudSoft;
-    ctx.fillText('deaths', L.w / 2, y + ch + (phone ? 24 : 32) * s0);
+    const labelY = y + ch + (phone ? 24 : 32) * s0;
+    const lfs = (phone ? 13 : 16) * s0;
+    if (hud.levelLabel) {
+      // from level 2 on: "Level 2 · deaths", the level part a touch bolder
+      const a = `${hud.levelLabel}  ·  `, b = 'deaths';
+      const fa = `800 ${lfs.toFixed(1)}px ${FONT_TEXT}`, fb = `700 ${lfs.toFixed(1)}px ${FONT_TEXT}`;
+      const wa = this.measure(ctx, fa, a), wb = this.measure(ctx, fb, b);
+      const lx = L.w / 2 - (wa + wb) / 2;
+      ctx.textAlign = 'left';
+      ctx.font = fa;
+      ctx.fillStyle = pal.hud;
+      ctx.globalAlpha = 0.8;
+      ctx.fillText(a, lx, labelY);
+      ctx.globalAlpha = 1;
+      ctx.font = fb;
+      ctx.fillStyle = pal.hudSoft;
+      ctx.fillText(b, lx + wa, labelY);
+      ctx.textAlign = 'center';
+    } else {
+      ctx.font = `700 ${lfs.toFixed(1)}px ${FONT_TEXT}`;
+      ctx.fillStyle = pal.hudSoft;
+      ctx.fillText('deaths', L.w / 2, labelY);
+    }
+    if (hud.encore) this.encoreBadge(ctx, x0Cards + total + 4 * s, y - 2 * s, s0 * (phone ? 0.82 : 1));
+  }
+
+  /** A little pink "Encore" sticker slapped on the counter's top-right corner. */
+  private encoreBadge(ctx: CanvasRenderingContext2D, x: number, y: number, s: number): void {
+    const font = `${(14 * s).toFixed(1)}px ${FONT_DISPLAY}`;
+    const tw = this.measure(ctx, font, 'Encore');
+    const pw = tw + 18 * s, ph = 24 * s;
+    ctx.save();
+    ctx.translate(x - pw * 0.3, y);
+    ctx.rotate((10 * Math.PI) / 180);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.roundRect(-pw / 2, -ph / 2 + 3 * s, pw, ph, ph / 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.roundRect(-pw / 2, -ph / 2, pw, ph, ph / 2);
+    ctx.fillStyle = HAZARD;
+    ctx.fill();
+    ctx.lineWidth = 2.5 * s;
+    ctx.strokeStyle = INK;
+    ctx.stroke();
+    ctx.font = font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = CREAM_HI;
+    ctx.fillText('Encore', 0, 1 * s);
+    ctx.restore();
+    ctx.textBaseline = 'alphabetic';
   }
 
   // ---- progress bar ---------------------------------------------------------
@@ -548,6 +616,13 @@ function wrap(ctx: CanvasRenderingContext2D, font: string, text: string, maxW: n
   }
   if (cur) lines.push(cur);
   return lines;
+}
+
+/** One card's hop in the win wave, 0..1 (up and back down with a little bounce). */
+function cascadeHop(t: number): number {
+  if (t <= 0 || t >= 0.62) return 0;
+  const k = t / 0.62;
+  return Math.sin(k * Math.PI) * (1 - 0.25 * k) + (k > 0.7 ? 0.1 * Math.sin((k - 0.7) * 20) * (1 - k) : 0);
 }
 
 function clamp01(v: number): number {

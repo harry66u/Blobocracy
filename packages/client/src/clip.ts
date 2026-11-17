@@ -3,7 +3,7 @@
 // Dev: /clip.html?id=<id> fetches /api/clips/<id>; /clip.html?fixture=<name> loads
 // /fixtures/<name>.replay.
 import './fonts.css';
-import { LEVEL1, unpackReplay, type Replay, type ServerEvent } from '@blobocracy/shared';
+import { LEVELS, unpackReplay, type Level, type Replay, type ServerEvent } from '@blobocracy/shared';
 import { createGameAudio, type GameAudio } from './audio/index.ts';
 import { clipLength, drawClipFrame, type ClipBrand } from './clip/draw.ts';
 import { exportClip, exportSupport, type ExportResult } from './clip/export.ts';
@@ -26,14 +26,30 @@ const fixture = params.get('fixture');
 const source = fixture && /^[a-z0-9-]{1,40}$/.test(fixture) ? `/fixtures/${fixture}.replay` : clipId && /^[A-Za-z0-9_-]{1,64}$/.test(clipId) ? `/api/clips/${clipId}` : null;
 const shareUrl = clipId ? `${location.origin}/c/${clipId}` : location.href;
 
+/** A win clip is saved when the celebration ends (up to ~25 s after its link appears): keep asking that long. */
+const MAKING_RETRY_MS = 2500, MAKING_GIVE_UP_MS = 60_000;
+
 async function load(): Promise<Replay> {
   if (!source) throw new Error('missing');
-  const res = await fetch(source);
+  const t0 = Date.now();
+  let res = await fetch(source);
+  // 503: the clip is still being made (the sim says so), or the blob is reconnecting
+  while (res.status === 503 && Date.now() - t0 < MAKING_GIVE_UP_MS) {
+    $('headline').textContent = 'Making the clip…';
+    $('sub').textContent = 'The internet is still celebrating. It will be ready in a few seconds.';
+    await new Promise((r) => setTimeout(r, MAKING_RETRY_MS));
+    res = await fetch(source, { cache: 'no-store' });
+  }
   if (!res.ok) throw new Error(res.status === 404 ? 'missing' : `HTTP ${res.status}`);
   const r = await unpackReplay(new Uint8Array(await res.arrayBuffer()));
   if (!r) throw new Error('corrupt');
-  if (r.levelId !== LEVEL1.id) throw new Error('level');
+  if (!levelOf(r)) throw new Error('level');
   return r;
+}
+
+/** The level a clip was played on (its version's geometry must still be this build's). */
+function levelOf(r: Replay): Level | null {
+  return LEVELS.find((l) => l.id === r.levelId && l.version === r.levelVersion) ?? null;
 }
 
 // ---- words ---------------------------------------------------------------------------------
@@ -44,7 +60,12 @@ function storyOf(r: Replay): Story {
   const run = `Run ${fmt(r.run)}`;
   const deaths = `${fmt(r.deaths)} deaths so far.`;
   if (r.kind === 'win') {
-    return { kicker: 'We did it!', yay: true, headline: `${run} beat the whole level.`, sub: `It took ${fmt(r.deaths)} deaths and everyone online steering one blob.`, share: `${run} beat Blobocracy after ${fmt(r.deaths)} deaths.` };
+    const lv = `Level ${r.levelId}`;
+    return {
+      kicker: 'The internet did it!', yay: true, headline: `${run} beat ${welcome?.encore ? `the ${lv} encore` : lv}.`,
+      sub: `It took ${fmt(r.deaths)} deaths and everyone online steering one blob.`,
+      share: `The internet beat ${lv} of Blobocracy after ${fmt(r.deaths)} deaths.`,
+    };
   }
   if (r.kind === 'record') {
     return {
@@ -198,7 +219,7 @@ async function makeVideo(a: ClipAspect): Promise<{ result: ExportResult; file: F
   announce('Making the video.');
   try {
     const result = await exportClip({
-      replay, level: LEVEL1, aspect: a, brand, signal: abort.signal,
+      replay, level: levelOf(replay)!, aspect: a, brand, signal: abort.signal,
       audio: params.get('audio') === 'opus' ? 'aac-or-opus' : 'aac',
       method: params.get('export') === 'mediarecorder' ? 'mediarecorder' : 'auto',
       onProgress: (p, phase) => {
@@ -318,7 +339,7 @@ async function boot(): Promise<void> {
   }
   replay = r;
   brand = { host, deaths: r.deaths };
-  pb = new ClipPlayback(r, LEVEL1, { reduced });
+  pb = new ClipPlayback(r, levelOf(r)!, { reduced });
   total = clipLength(pb);
   const story = storyOf(r);
   const kicker = $('kicker');
@@ -365,7 +386,7 @@ function exposeForTests(): void {
         c.width = Math.round(lay.w * lay.dpr);
         c.height = Math.round(lay.h * lay.dpr);
         const cx = c.getContext('2d', { alpha: false })!;
-        const p = new ClipPlayback(replay, LEVEL1, { reduced });
+        const p = new ClipPlayback(replay, levelOf(replay)!, { reduced });
         resetRenderer();
         warmTo(p, lay, at, (tt) => drawClipFrame(cx, lay, p, tt, brand));
         return c.toDataURL('image/png');

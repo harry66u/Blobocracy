@@ -20,6 +20,8 @@ export interface SceneLevel {
   zones: SceneZone[];
   /** Moving hazards and platforms (the level's own list; positions come from entityState). */
   entities: Entity[];
+  /** World x of the goal, where the golden crown floats (absent: no crown drawn). */
+  goalX?: number;
 }
 
 /** A crumble tile stood on this run, and the run time (s) it was first touched. */
@@ -42,6 +44,10 @@ export interface SceneBlob {
   dead: boolean;
   /** What killed it ('press', 'spikes', 'ceiling spikes', 'pit', 'saw', 'chomp'); picks the death pose. */
   deathCause?: string | null;
+  /** The golden crown on its head: 0 none, (0,1) popping on, 1 worn. */
+  crown?: number;
+  /** Celebrating: happy closed eyes and a big open smile. */
+  joy?: boolean;
 }
 
 export interface SceneHud {
@@ -60,6 +66,29 @@ export interface SceneHud {
   /** false: no sound/settings buttons, and the progress bar ends `barEnd` CSS px from the right (clips). */
   buttons?: boolean;
   barEnd?: number;
+  /** "Level 2" under the counter from level 2 on (null on level 1). */
+  levelLabel?: string | null;
+  /** An encore: a little "Encore" badge on the counter. */
+  encore?: boolean;
+  /** Seconds into a celebratory hop wave across the counter cards (the win), or null. */
+  cascade?: number | null;
+}
+
+/** The win being celebrated (spec §6.7), with the words the card needs. */
+export interface SceneWin {
+  /** Seconds since the blob touched the goal. */
+  age: number;
+  levelId: number;
+  run: number;
+  deaths: number;
+  durationS: number;
+  peakPlayers: number;
+  /** The level's name and what comes next (null: the last level, an encore follows). */
+  name: string;
+  next: { levelId: number; name: string } | null;
+  encore: boolean;
+  /** The win clip exists: the card makes room for "Share the clip". */
+  clip?: boolean;
 }
 
 export interface SceneDeathCard {
@@ -85,6 +114,11 @@ export interface SceneBanner {
   name: string;
   /** Seconds since the zone was entered. */
   age: number;
+  /** The sticker's words instead of "Zone 3" (e.g. "Level 2 unlocked!"). */
+  label?: string;
+  /** How long it stays up (default BANNER_S), and a bigger size for the level-up. */
+  life?: number;
+  big?: boolean;
 }
 
 /** Screen-wide effects for the big moments. All optional; absent means calm. */
@@ -104,6 +138,8 @@ export interface SceneFx {
   recordFlag: { x: number; label: string } | null;
   /** Sky cross-fade speed multiplier (fast during the swoop, slow under reduced motion). */
   skyRate: number;
+  /** World animation speed: slow motion as the blob touches the goal (default 1). */
+  timeScale?: number;
 }
 
 export interface Scene {
@@ -125,6 +161,8 @@ export interface Scene {
   /** Crumble tiles touched this run: they shake for 0.5 s, then break apart and are gone. */
   crumbles: SceneCrumble[];
   fx?: SceneFx;
+  /** The win celebration, or null/absent. */
+  win?: SceneWin | null;
 }
 
 export type { Layout };

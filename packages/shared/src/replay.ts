@@ -225,13 +225,29 @@ const isFrac = (v: unknown): v is number => isNum(v) && v >= 0 && v <= 1;
 const isRecord = (v: unknown): boolean =>
   v === null || (typeof v === 'object' && isFrac((v as { progress?: unknown }).progress) && isCount((v as { run?: unknown }).run));
 
+const isName = (v: unknown): v is string => typeof v === 'string' && v.length <= 80;
+const isClipId = (v: unknown): boolean => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+
+function isWin(e: Record<string, unknown>): boolean {
+  return e.t === 'win' && isCount(e.levelId) && isCount(e.run) && isCount(e.deaths) && isNum(e.durationS) && e.durationS >= 0
+    && isCount(e.peakPlayers) && (e.clipId === null || isClipId(e.clipId));
+}
+
+function isCelebrating(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false;
+  const c = v as { win?: unknown; ageS?: unknown };
+  return typeof c.win === 'object' && c.win !== null && isWin(c.win as Record<string, unknown>) && isNum(c.ageS) && c.ageS >= 0;
+}
+
 /** True for a structurally valid ServerEvent (no extra trust beyond shape and ranges). */
 export function isServerEvent(v: unknown): v is ServerEvent {
   if (typeof v !== 'object' || v === null) return false;
   const e = v as Record<string, unknown>;
   switch (e.t) {
     case 'welcome':
-      return isCount(e.levelId) && isCount(e.version) && isCount(e.deaths) && isRecord(e.record) && isCount(e.run) && isCount(e.zone) && isCount(e.online);
+      return isCount(e.levelId) && isCount(e.version) && isCount(e.deaths) && isRecord(e.record) && isCount(e.run) && isCount(e.zone) && isCount(e.online)
+        && (e.name === undefined || isName(e.name)) && (e.encore === undefined || typeof e.encore === 'boolean')
+        && (e.celebrating === undefined || isCelebrating(e.celebrating));
     case 'death':
       return isCount(e.run) && typeof e.cause === 'string' && CAUSES.includes(e.cause) && isFrac(e.progress) && isCount(e.deaths)
         && isCount(e.zone) && typeof e.nearRecord === 'boolean';
@@ -242,7 +258,11 @@ export function isServerEvent(v: unknown): v is ServerEvent {
     case 'reset':
       return isCount(e.run);
     case 'clip':
-      return typeof e.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(e.id) && KINDS.includes(e.kind as ReplayKind) && isCount(e.run);
+      return isClipId(e.id) && KINDS.includes(e.kind as ReplayKind) && isCount(e.run);
+    case 'win':
+      return isWin(e);
+    case 'level':
+      return isCount(e.levelId) && isCount(e.version) && isName(e.name) && typeof e.encore === 'boolean';
     default:
       return false;
   }

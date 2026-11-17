@@ -1,4 +1,4 @@
-import { LEVEL_HEIGHT, PHYS } from './constants';
+import { ENCORE_TRACK, LEVEL_HEIGHT, PHYS } from './constants';
 import { makeEntity, type Entity, type EntitySpec } from './entities';
 
 /** Tile codes stored in `Level.tiles`. */
@@ -34,6 +34,8 @@ export interface Zone { index: number; name: string; sky: Sky; startX: number; e
 export interface Level {
   id: number;
   version: number;
+  /** Display name ("Crown Mountain"); levelTitle() falls back to "Level <id>". */
+  name?: string;
   width: number;
   height: 18;
   tiles: Uint8Array;
@@ -56,7 +58,7 @@ const rowsOf = (room: string[] | RoomDef): string[] => (Array.isArray(room) ? ro
  * Parses ASCII zones into a level. Throws on malformed rooms, unknown characters,
  * or anything but exactly one `@` (in the first room) and one `G` (in the last room).
  */
-export function parseLevel(id: number, version: number, zones: ZoneDef[]): Level {
+export function parseLevel(id: number, version: number, zones: ZoneDef[], name?: string): Level {
   const rooms = zones.flatMap((z) => z.rooms.map(rowsOf));
   if (rooms.length === 0) throw new Error('level has no rooms');
 
@@ -120,7 +122,7 @@ export function parseLevel(id: number, version: number, zones: ZoneDef[]): Level
   if (goal.room !== rooms.length - 1) throw new Error(`'G' must be in the last room, found in room ${goal.room}`);
 
   return {
-    id, version, width, height: LEVEL_HEIGHT, tiles, zones: parsedZones,
+    id, version, ...(name !== undefined ? { name } : {}), width, height: LEVEL_HEIGHT, tiles, zones: parsedZones,
     spawn: { x: spawn.x, y: spawn.y }, goalX: goal.x, entities,
   };
 }
@@ -163,4 +165,21 @@ export function levelHash(level: Level): string {
   const ents = JSON.stringify(level.entities);
   for (let i = 0; i < ents.length; i++) mix(ents.charCodeAt(i));
   return h.toString(16).padStart(8, '0');
+}
+
+/** A level's display name: its own, or "Level <id>". */
+export function levelTitle(level: Pick<Level, 'id' | 'name'>): string {
+  return level.name ?? `Level ${level.id}`;
+}
+
+/**
+ * Where a level's counters, runs and hall of fame entry live (spec §6.7): the level id, or for
+ * an encore (the last level replayed after it was beaten) ENCORE_TRACK + id, so it counts afresh.
+ */
+export function trackId(levelId: number, encore: boolean): number {
+  return encore ? ENCORE_TRACK + levelId : levelId;
+}
+
+export function trackOf(track: number): { levelId: number; encore: boolean } {
+  return track >= ENCORE_TRACK ? { levelId: track - ENCORE_TRACK, encore: true } : { levelId: track, encore: false };
 }

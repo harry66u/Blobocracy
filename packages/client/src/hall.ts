@@ -6,8 +6,15 @@ import { getJson, mountFlip, watchCounter } from './pages/common.ts';
 import { fmt, longDate, pct } from './pages/format.ts';
 import { blobSvg } from './pages/icons.ts';
 
-interface Entry { levelId: number; levelName: string; beatenAt: number; deathCount: number; peakPlayers: number; run: number; clipId: string | null }
-interface Hall { entries: Entry[]; current: { levelId: number; name: string; deaths: number; record: { progress: number; run: number } | null } }
+interface Entry { levelId: number; track?: number; encore?: boolean; levelName: string; beatenAt: number; deathCount: number; peakPlayers: number; run: number; clipId: string | null }
+interface Hall {
+  entries: Entry[];
+  current: { levelId: number; name: string; deaths: number; record: { progress: number; run: number } | null; encore?: boolean };
+  /** The level after the current one, or null when the current one is the last built. */
+  next?: { levelId: number; name: string } | null;
+  /** The last built level has been beaten: a new level is coming (spec §6.7). */
+  comingSoon?: boolean;
+}
 
 const $ = (id: string) => document.getElementById(id)!;
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -38,12 +45,12 @@ function winnerCard(e: Entry): string {
   const watch = e.clipId
     ? `<a class="btn big pink" href="/c/${encodeURIComponent(e.clipId)}">${PLAY}Watch the winning run</a>`
     : '<span class="sub">The winning clip is still being polished.</span>';
-  return `<article class="panel winner" aria-labelledby="lv-${e.levelId}">
+  return `<article class="panel winner" aria-labelledby="lv-${e.track ?? e.levelId}">
     <div class="banner">
       ${confetti(e.levelId)}
       ${MEDAL}
-      <div class="level">Level ${e.levelId} · beaten</div>
-      <h2 id="lv-${e.levelId}">${esc(e.levelName)} has fallen!</h2>
+      <div class="level">Level ${e.levelId}${e.encore ? ' encore' : ''} · beaten</div>
+      <h2 id="lv-${e.track ?? e.levelId}">${esc(e.levelName.replace(/ \(encore\)$/, ''))}${e.encore ? ' fell again!' : ' has fallen!'}</h2>
       <div class="date">${longDate(e.beatenAt)}</div>
     </div>
     <div class="stats">
@@ -55,16 +62,27 @@ function winnerCard(e: Entry): string {
   </article>`;
 }
 
+const SPARK = `<svg class="lock" viewBox="0 0 46 46" aria-hidden="true" fill="none" stroke="#2A1B3D" stroke-width="3.2" stroke-linejoin="round"><path d="M23 4c1.4 9 4.6 12.6 15 15-10.4 2.4-13.6 6-15 15-1.4-9-4.6-12.6-15-15 10.4-2.4 13.6-6 15-15z" fill="#FFD21F"/><path d="M37 30c.6 3.4 1.8 4.7 5.5 5.5-3.7.8-4.9 2.1-5.5 5.5-.6-3.4-1.8-4.7-5.5-5.5 3.7-.8 4.9-2.1 5.5-5.5z" fill="#FF3B7A" stroke-width="2.5"/></svg>`;
+
+/** Every built level has fallen: the next one is being made, and the last one plays on as an encore. */
+function comingCard(h: Hall): string {
+  const c = h.current;
+  return `<section class="panel next coming" aria-label="What comes next">${SPARK}<p><b>A new level is coming.</b>`
+    + `${c.encore ? `Until then, ${esc(c.name)} plays on as an encore with a fresh counter: <b class="inline">${fmt(c.deaths)}</b> ${c.deaths === 1 ? 'death' : 'deaths'} so far.` : 'Every level built so far has fallen.'}`
+    + ` <a href="/">Play the encore</a></p></section>`;
+}
+
 function emptyCard(h: Hall): string {
   const c = h.current;
   const rec = c.record;
+  const next = h.next === undefined ? { levelId: c.levelId + 1, name: '' } : h.next;
   return `<article class="panel waiting" aria-labelledby="wait-title">
     <span class="sticker">Still standing</span>
     <div class="pedestal" aria-hidden="true">
       <svg class="ghost" viewBox="0 0 96 96" fill="none" stroke="#2A1B3D" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 7" opacity=".55">
         <path d="M28 14h40v18a20 20 0 0 1-40 0z"/><path d="M28 19H15q0 17 15 18M68 19h13q0 17-15 18"/><path d="M48 52v14"/><path d="M33 84h30l-4-14H37z"/>
       </svg>
-      <div class="column"></div>
+      <div class="column" data-level="LEVEL ${c.levelId}${c.encore ? ' ★' : ''}"></div>
       ${blobSvg('bob', 'worried')}
     </div>
     <div>
@@ -77,13 +95,20 @@ function emptyCard(h: Hall): string {
       <div class="cta"><a class="btn big pink" href="/">Go help it</a><a class="btn big" href="/runs">See every run</a></div>
     </div>
   </article>
-  <section class="panel next" aria-label="What comes next">${LOCK}<p><b>Level 2 is waiting behind it.</b>It unlocks for everyone the moment ${esc(c.name)} falls.</p></section>`;
+  ${next
+    ? `<section class="panel next" aria-label="What comes next">${LOCK}<p><b>Level ${next.levelId} is waiting behind it.</b>It unlocks for everyone the moment ${esc(c.name)} falls.</p></section>`
+    : `<section class="panel next" aria-label="What comes next">${LOCK}<p><b>This is the last level built so far.</b>If it falls, a new level is on its way, and this one plays on as an encore.</p></section>`}`;
 }
 
 async function boot(): Promise<void> {
   try {
     const h = await getJson<Hall>('/api/hall');
-    $('entries').innerHTML = (h.entries.map(winnerCard).join('')) + (h.entries.some((e) => e.levelId === h.current.levelId) ? '' : emptyCard(h));
+    const curTrack = (h.current.encore ? 1000 : 0) + h.current.levelId;
+    const curBeaten = h.entries.some((e) => (e.track ?? e.levelId) === curTrack);
+    // newest first: the latest triumph on top
+    const cards = [...h.entries].sort((a, b) => b.beatenAt - a.beatenAt).map(winnerCard).join('');
+    // the last level has fallen: "a new level is coming" leads; otherwise the level still standing closes the list
+    $('entries').innerHTML = (h.comingSoon ? comingCard(h) : '') + cards + (h.comingSoon || curBeaten ? '' : emptyCard(h));
     const triesEl = document.getElementById('tries');
     if (triesEl) {
       const flip = mountFlip(triesEl, (n) => `${fmt(n)}`);

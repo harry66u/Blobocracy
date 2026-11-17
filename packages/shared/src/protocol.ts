@@ -10,11 +10,17 @@ export const IN_LEFT = 1, IN_RIGHT = 2, IN_JUMP = 4;
 /** Crowd slot codes: a present player pressing nothing / left / right, or an empty slot. */
 export const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2, DOT_EMPTY = 3;
 
+/**
+ * What the world is doing: a run in progress, the death hold, nobody playing, or the
+ * celebration after a win (inputs ignored; then the next level unlocks).
+ */
+export type Phase = 'running' | 'dying' | 'paused' | 'celebrating';
+
 /** One authoritative world snapshot, broadcast at 20 Hz. */
 export interface StateFrame {
   tick: number; run: number;
   x: number; y: number; vx: number; vy: number;
-  grounded: boolean; facing: 1 | -1; phase: 'running' | 'dying' | 'paused';
+  grounded: boolean; facing: 1 | -1; phase: Phase;
   pull: number; pressure: number; strain: number; jumpHeld: boolean;
   online: number; active: number;
   /** Per crowd slot: a DOT_* code. */
@@ -34,15 +40,33 @@ export const MAX_FRAME_CRUMBLES = 16;
 /** Only crumbles within this many tiles of the blob go in a frame. */
 export const FRAME_CRUMBLE_RANGE = 40;
 
+/**
+ * The world beat its level (spec §6.7): `run` reached the goal after `deaths` deaths, the run
+ * took `durationS` seconds, and at most `peakPlayers` were online at once on this level.
+ * `clipId` names the win clip (the last 60 s), saved when the celebration ends.
+ */
+export type WinEvent = { t: 'win'; levelId: number; run: number; deaths: number; durationS: number; peakPlayers: number; clipId: string | null };
+
 /** JSON text-frame events from the server. */
 export type ServerEvent =
-  | { t: 'welcome'; levelId: number; version: number; deaths: number; record: { progress: number; run: number } | null; run: number; zone: number; online: number }
+  | {
+    t: 'welcome'; levelId: number; version: number; deaths: number; record: { progress: number; run: number } | null; run: number; zone: number; online: number;
+    /** The level's display name. */
+    name?: string;
+    /** The last level, replayed after it was beaten, with its own counters. */
+    encore?: boolean;
+    /** Joined during a celebration: the win, and how long ago it happened. */
+    celebrating?: { win: WinEvent; ageS: number };
+  }
   | { t: 'death'; run: number; cause: Cause; progress: number; deaths: number; zone: number; nearRecord: boolean }
   | { t: 'zone'; run: number; index: number; name: string }
   | { t: 'record'; run: number; progress: number }
   | { t: 'reset'; run: number }
   /** A replay clip of `run` was recorded (spec §13); watch it at /c/<id>. */
-  | { t: 'clip'; id: string; kind: 'record' | 'near_miss' | 'win'; run: number };
+  | { t: 'clip'; id: string; kind: 'record' | 'near_miss' | 'win'; run: number }
+  | WinEvent
+  /** After the celebration: everyone moves to this level (or an encore of the last one); a welcome follows. */
+  | { t: 'level'; levelId: number; version: number; name: string; encore: boolean };
 
 /** Clip ids: short URL-safe slugs. */
 export const CLIP_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -54,10 +78,12 @@ export const CLIP_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
  */
 export type EdgeNotice = { t: 'sim'; up: boolean };
 
-const PHASES = ['running', 'dying', 'paused'] as const;
+const PHASES: readonly Phase[] = ['running', 'dying', 'paused', 'celebrating'];
 const STATE_HEADER = 46;
 const CRUMBLE_BYTES = 8;
 const F_GROUNDED = 1, F_FACING_RIGHT = 2, F_JUMP = 4, PHASE_SHIFT = 3;
+/** Flag bits above the 2-bit phase must be zero. */
+const F_UNUSED = 0b1110_0000;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -149,6 +175,7 @@ function decodeState(buf: ArrayBuffer): StateFrame | null {
   const k = dv.getUint8(c0);
   if (k > MAX_FRAME_CRUMBLES || u8.length !== stateSize(n, k)) return null;
   const flags = dv.getUint8(25);
+  if (flags & F_UNUSED) return null;
   const phase = PHASES[(flags >> PHASE_SHIFT) & 3];
   if (!phase) return null;
   const dots = new Uint8Array(n);

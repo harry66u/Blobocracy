@@ -6,7 +6,7 @@ import { clampZone, generatePattern, LAYERS, mulberry32, stepSeconds, zoneStyle,
 import { browserStorage, loadMuted, saveMuted, type StorageLike } from './prefs.ts';
 import { RateLimiter } from './ratelimit.ts';
 import {
-  arpVoice, bassVoice, cheerSound, counterVoice, crumbleSound, deathSound, hatVoice, heartVoice, jumpSound, landSound,
+  arpVoice, bassVoice, cheerSound, counterVoice, crumbleSound, deathSound, fanfareSound, hatVoice, heartVoice, jumpSound, landSound, levelUpSound,
   makeKit, mtof, padVoice, pluckVoice, pressSound, springSound, type Kit, type MusicVoice,
 } from './voices.ts';
 
@@ -31,6 +31,10 @@ export interface GameAudio {
   cheer(kind: 'zone' | 'record'): void;
   /** After the death hold: the music fades back in from zone 0. */
   resetToStart(): void;
+  /** The world beat the level: the music ducks out under a fanfare and a huge cheer, then comes back. */
+  win(): void;
+  /** The next level unlocks: a rising "level up" sting, and the music starts over from zone 0. */
+  levelUp(): void;
   /** Optional per-frame housekeeping (the scheduler also runs on its own timer). */
   tick(): void;
 }
@@ -215,7 +219,7 @@ export function createGameAudio(opts: GameAudioOptions = {}): GameAudio {
   let realtime = false;
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  const limiter = new RateLimiter({ jump: 0.08, land: 0.09, spring: 0.12, crumble: 0.09, press: 0.15, cheer: 0.6, death: 1 });
+  const limiter = new RateLimiter({ jump: 0.08, land: 0.09, spring: 0.12, crumble: 0.09, press: 0.15, cheer: 0.6, death: 1, win: 5, levelUp: 2 });
   const patterns = Array.from({ length: ZONE_COUNT }, (_, z) => generatePattern(z, seed));
   const indexed = patterns.map(indexPattern);
 
@@ -534,6 +538,35 @@ export function createGameAudio(opts: GameAudioOptions = {}): GameAudio {
         startMusic(0, 2.5);
       } catch { /* ignore */ }
     },
+
+    win: guard((g) => {
+      if (muted) return;
+      const t = g.ctx.currentTime + 0.005;
+      if (!limiter.allow('win', t)) return;
+      dead = false;
+      // the music steps aside for the fanfare, then comes back under the party
+      const cut = g.musicCut.gain;
+      cut.cancelScheduledValues(t);
+      cut.setValueAtTime(cut.value, t);
+      cut.linearRampToValueAtTime(0, t + 0.25);
+      cut.setValueAtTime(0, t + 4);
+      cut.linearRampToValueAtTime(1, t + 7);
+      setSaw(0);
+      fanfareSound(g.kit, g.sfx, t);
+      cheerSound(g.kit, g.sfx, t + 0.15, 'record');
+      cheerSound(g.kit, g.sfx, t + 1.35, 'record');
+      cheerSound(g.kit, g.sfx, t + 2.9, 'zone');
+    }),
+
+    levelUp: guard((g) => {
+      const t = g.ctx.currentTime + 0.005;
+      if (!limiter.allow('levelUp', t)) return;
+      dead = false;
+      targetZone = 0;
+      if (!muted) levelUpSound(g.kit, g.sfx, t);
+      glideTo(g.sfx.gain, t, 1, 0.05);
+      startMusic(0, 3);
+    }),
 
     tick() {
       try { if (live()) pump(); } catch { /* ignore */ }

@@ -44,7 +44,7 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [x] Link preview images (site image, per-clip images, per-clip tags on `/c/:id`)
 
 ## Milestone 7: win and ship
-- [ ] Win sequence and permanent hall of fame moment
-- [ ] Level 2 unlocks
+- [x] Win sequence and permanent hall of fame moment (celebration, win clip, hall entry; `POST /admin/debug/win` to see it locally)
+- [x] Level 2 unlocks (per-level counters, level-up transition, encore after the last level)
 - [ ] Fly.io deployment walkthrough for you
 - [ ] README: setup, scaling, environment variables

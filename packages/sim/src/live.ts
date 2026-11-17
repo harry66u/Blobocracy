@@ -19,8 +19,12 @@ export interface LiveSnapshot {
   runStartedAt: number;
   runPeak: number;
   runMaxX: number;
-  /** Most players online at once, ever. */
+  /** Most players online at once on this level's track, ever. */
   peakPlayers: number;
+  /** The same for the other tracks (track id → peak). */
+  trackPeaks?: [number, number][];
+  /** The level is being played as an encore (world.encore says the same; kept for readers of the snapshot). */
+  encore?: boolean;
   /** Banned IPs/CIDRs (admin), so a restart does not unban anyone. */
   bans: string[];
   savedAt: number;

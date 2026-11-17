@@ -1,5 +1,6 @@
 import uWS from 'uWebSockets.js';
 import { decodeClient, encodePong, type ServerEvent } from '@blobocracy/shared';
+import type { AdminRequest, AdminResponse } from './admin';
 import { mountApi, type ApiHandler } from './api';
 import type { Voters } from './crowd';
 import type { World } from './world';
@@ -17,7 +18,7 @@ const MAX_MESSAGE_BYTES = 64;
 interface SocketData { id: number }
 
 /** Serves browsers directly from the sim process: single-process dev mode (`npm run dev`). */
-export function startLocalRelay(opts: { port: number; voters: Voters; world: World; clock: () => number; api?: ApiHandler }):
+export function startLocalRelay(opts: { port: number; voters: Voters; world: World; clock: () => number; api?: ApiHandler; admin?: (r: AdminRequest) => AdminResponse }):
   Promise<Relay & { port: number }> {
   const { voters, world, clock } = opts;
   let nextId = 1;
@@ -56,6 +57,25 @@ export function startLocalRelay(opts: { port: number; voters: Voters; world: Wor
   });
 
   if (opts.api) { const api = opts.api; mountApi(app, () => api); }
+  if (opts.admin) {
+    // the admin API on the dev relay too (Bearer ADMIN_TOKEN), e.g. POST /admin/debug/win
+    const admin = opts.admin;
+    const route = (res: uWS.HttpResponse, req: uWS.HttpRequest) => {
+      const method = req.getMethod(), path = req.getUrl(), auth = req.getHeader('authorization');
+      let aborted = false, size = 0;
+      const chunks: Buffer[] = [];
+      res.onAborted(() => { aborted = true; });
+      res.onData((ab, last) => {
+        size += ab.byteLength;
+        if (size <= 16 * 1024) chunks.push(Buffer.from(ab.slice(0)));
+        if (!last || aborted) return;
+        const out = admin({ method, path, auth, body: Buffer.concat(chunks).toString() });
+        res.cork(() => { res.writeStatus(String(out.status)).writeHeader('content-type', 'application/json').end(JSON.stringify(out.body)); });
+      });
+    };
+    app.get('/admin/*', route);
+    app.post('/admin/*', route);
+  }
   // No session service in single-process dev: the client sees 404 on /session and connects without a token.
   app.any('/*', (res) => { res.writeStatus('404 Not Found').end('not found'); });
 

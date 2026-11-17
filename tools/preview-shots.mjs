@@ -81,6 +81,18 @@ const states = [
   { name: 'moment-zone-drop', q: 'sky=sunset&x=73&dots=80&strain=0&at=0.3&moment=zone&slow=0.1', age: 0.3 },
   { name: 'moment-record', q: 'sky=sunset&x=100&dots=80&strain=0&at=0.3&moment=record&slow=0.25', age: 0.5 },
   { name: 'moment-reduced-zone', q: 'sky=sunset&x=73&dots=80&strain=0&at=0.3&moment=zone&slow=0.25&reduced=1', age: 0.9 },
+  // the win (spec §6.7) on the real level 1 goal, and the level-up that follows
+  { name: 'moment-win-touch', q: 'level=real1&dots=80&strain=0&at=0.05&moment=win&slow=0.1', age: 0.18 },
+  { name: 'moment-win-crown', q: 'level=real1&dots=80&strain=0&at=0.05&moment=win&slow=0.1', age: 0.62 },
+  { name: 'moment-win-fireworks', q: 'level=real1&dots=80&strain=0&at=0.05&moment=win&slow=0.3', age: 1.7 },
+  { name: 'moment-win-card', q: 'level=real1&dots=80&strain=0&at=0.05&moment=win&slow=0.5', age: 4.2 },
+  { name: 'moment-win-card-late', q: 'level=real2&encore=1&dots=80&strain=0&at=0.05&moment=win', age: 9 },
+  { name: 'moment-win-reduced', q: 'level=real1&dots=80&strain=0&at=0.05&moment=win&reduced=1&slow=0.5', age: 4.2 },
+  { name: 'moment-levelup-shrink', q: 'level=real1&dots=80&strain=0&at=0.05&moment=levelup&slow=0.25', age: 0.4 + 0.75 },
+  { name: 'moment-levelup-swap', q: 'level=real1&dots=80&strain=0&at=0.05&moment=levelup&slow=0.25', age: 0.4 + 1.6 },
+  { name: 'moment-levelup-banner', q: 'level=real1&dots=80&strain=0&at=0.05&moment=levelup&slow=0.25', age: 0.4 + 2.6 },
+  { name: 'moment-levelup-reduced', q: 'level=real1&dots=80&strain=0&at=0.05&moment=levelup&reduced=1&slow=0.25', age: 0.4 + 0.5 },
+  { name: 'hud-level2-encore', q: 'level=real2&x=12&dots=80&strain=0&encore=1' },
   { name: 'settings', q: 'sky=blue&dots=80&still=1&strain=0&settings=1' },
   // the game page with no game server running: it stays on the loading screen
   { name: 'loading', path: '/', q: '' },

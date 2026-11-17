@@ -5,6 +5,7 @@
 import { BLOB, BLOB_SHADE, CREAM_HI, FONT_TEXT, INK, SWEAT } from './palette.ts';
 import { dangerAhead, HALF_H, type DangerWorld } from './danger.ts';
 import { drawDeathPose, drawGulp } from './deathpose.ts';
+import { drawCrown } from './win.ts';
 import type { SceneBlob, SceneLevel } from './scene.ts';
 
 export { dangerAhead, HALF_H } from './danger.ts';
@@ -25,6 +26,9 @@ export class BlobView {
   private dangerLevel = 0; // eased 0..1 so the face doesn't flicker
   private pullEased = 0;
   private tiltEased = 0;
+  /** When the crown landed on the head (for its pop), or -10. */
+  private crownT0 = -10;
+  private hadCrown = false;
   // dust particles (world tiles)
   private readonly px = new Float32Array(N_PARTICLES);
   private readonly py = new Float32Array(N_PARTICLES);
@@ -141,8 +145,12 @@ export class BlobView {
       return;
     }
     const r = T * 0.8;
-    const danger = this.dangerLevel;
-    const strain = b.strain;
+    const joy = b.joy === true;
+    const danger = joy ? 0 : this.dangerLevel;
+    const strain = joy ? 0 : b.strain;
+    const worn = (b.crown ?? 0) >= 1;
+    if (worn && !this.hadCrown) this.crownT0 = timeS;
+    this.hadCrown = worn;
     let kx = 1, ky = 1;
     if (!b.grounded) {
       const s = Math.min(1, Math.abs(b.vy) / 18);
@@ -208,12 +216,22 @@ export class BlobView {
     const bt = timeS - this.blinkT;
     const blink = bt < 0.13 ? Math.sin((bt / 0.13) * Math.PI) : 0;
     const ery = eryOpen * (1 - blink * 0.9);
-    const asleep = paused;
-    const efforting = !asleep && danger < 0.5 && strain > 0.45;
+    const asleep = paused && !joy;
+    const efforting = !asleep && !joy && danger < 0.5 && strain > 0.45;
 
     ctx.lineCap = 'round';
     for (const d of [-1, 1] as const) {
       const ex = d * bw * 0.36;
+      if (joy) {
+        // squeezed shut with happiness: ^ ^
+        ctx.lineWidth = T * 0.085;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ex - erx * 0.75, eyeY + eryOpen * 0.25);
+        ctx.quadraticCurveTo(ex, eyeY - eryOpen * 0.95, ex + erx * 0.75, eyeY + eryOpen * 0.25);
+        ctx.stroke();
+        continue;
+      }
       if (asleep) {
         ctx.lineWidth = T * 0.07;
         ctx.beginPath();
@@ -281,7 +299,7 @@ export class BlobView {
 
     // cheeks
     if (!efforting) {
-      ctx.fillStyle = 'rgba(255,90,120,.28)';
+      ctx.fillStyle = joy ? 'rgba(255,90,120,.45)' : 'rgba(255,90,120,.28)';
       for (const d of [-1, 1]) {
         ctx.beginPath();
         ctx.ellipse(d * bw * 0.62, bh * 0.22, bw * 0.13, bh * 0.07, 0, 0, Math.PI * 2);
@@ -292,7 +310,27 @@ export class BlobView {
     // mouth
     ctx.fillStyle = INK;
     ctx.strokeStyle = INK;
-    if (danger > 0.5) {
+    if (joy) {
+      // a big open "D" grin with a tongue
+      const mw = bw * 0.36, top = bh * 0.24, depth = bh * (0.36 + 0.04 * Math.sin(timeS * 7));
+      const grin = new Path2D();
+      grin.moveTo(-mw, top);
+      grin.quadraticCurveTo(0, top - bh * 0.05, mw, top);
+      grin.quadraticCurveTo(mw * 0.95, top + depth, 0, top + depth);
+      grin.quadraticCurveTo(-mw * 0.95, top + depth, -mw, top);
+      grin.closePath();
+      ctx.fill(grin);
+      ctx.save();
+      ctx.clip(grin);
+      ctx.fillStyle = '#FF7A9C';
+      ctx.beginPath();
+      ctx.ellipse(0, top + depth * 0.95, mw * 0.6, depth * 0.42, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.lineWidth = T * 0.06;
+      ctx.lineJoin = 'round';
+      ctx.stroke(grin);
+    } else if (danger > 0.5) {
       const o = 0.85 + 0.15 * Math.sin(timeS * 9);
       ctx.beginPath();
       ctx.ellipse(bw * 0.06, bh * 0.42, bw * 0.12 * o, bh * 0.14 * o, 0, 0, Math.PI * 2);
@@ -321,6 +359,18 @@ export class BlobView {
       ctx.moveTo(-bw * 0.15, bh * 0.36);
       ctx.quadraticCurveTo(0, bh * 0.52, bw * 0.15, bh * 0.36);
       ctx.stroke();
+    }
+    if (worn) {
+      // the crown, worn at a jaunty angle; it pops on with a squash when it lands
+      const pt = timeS - this.crownT0;
+      const pop = pt < 0.35 ? 1 + 0.35 * Math.sin((pt / 0.35) * Math.PI) * (1 - pt / 0.35) : 1;
+      const wob = pt < 1 ? 0.12 * Math.exp(-pt * 4) * Math.sin(pt * 18) : 0;
+      ctx.save();
+      ctx.translate(-faceX + bw * 0.08, -bh * 0.84);
+      ctx.rotate(0.16 + wob);
+      ctx.scale(pop, 2 - pop);
+      drawCrown(ctx, 0, bh * 0.08, bw * 1.15, { line: T * 0.075, shine: 0.5 + 0.5 * Math.sin(timeS * 3) });
+      ctx.restore();
     }
     ctx.restore();
 

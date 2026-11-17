@@ -2615,4 +2615,4 @@ const eyeOfTheStorm: ZoneDef = {
   ],
 };
 
-export const LEVEL2 = parseLevel(2, 1, [breezyBluffs, brambleGale, thePistonworks, moonbounceMesa, howlingHollow, eyeOfTheStorm]);
+export const LEVEL2 = parseLevel(2, 1, [breezyBluffs, brambleGale, thePistonworks, moonbounceMesa, howlingHollow, eyeOfTheStorm], 'Storm Peaks');

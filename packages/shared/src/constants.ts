@@ -7,6 +7,10 @@ export const FRAME_EVERY = 3;
 export const ACTIVE_WINDOW_S = 3;
 export const DEATH_FREEZE_S = 0.5;
 export const DEATH_HOLD_S = 3;
+/** After a win: the whole world celebrates this long (inputs ignored), then the next level unlocks. */
+export const CELEBRATE_S = 25;
+/** Track ids at or above this are encores: the last level replayed with its own counters (track = ENCORE_TRACK + level id). */
+export const ENCORE_TRACK = 1000;
 export const SAMPLE_SLOTS = 128;
 export const LEVEL_HEIGHT = 18;
 

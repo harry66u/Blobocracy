@@ -8,13 +8,19 @@ import { duration, fmt, killerName, pageList, pct, relTime } from './pages/forma
 import { blobSvg, hazardIcon } from './pages/icons.ts';
 
 interface Summary extends Counter {
-  levelId: number; levelName: string; attempts: number; zones: ChartZone[]; zoneReach: number[];
+  levelId: number; track?: number; current?: boolean; encore?: boolean; levelName: string; attempts: number; zones: ChartZone[]; zoneReach: number[];
   series: Point[]; records: Point[]; bucket: number; firstAt: number | null; lastAt: number | null;
 }
 interface RunJson { run: number; version: number; startedAt: number; endedAt: number; durationMs: number; progress: number; zone: number; cause: string; peakPlayers: number; clipId: string | null }
 interface RunPage { page: number; pages: number; pageSize: number; total: number; best: boolean; record: Counter['record']; runs: RunJson[] }
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+interface LevelItem { track: number; levelId: number; name: string; encore: boolean; beaten: boolean; current: boolean }
+
+/** Which level's runs are shown: ?level=<track>, else the one being played. */
+let track: number | null = (() => { const v = Number(new URLSearchParams(location.search).get('level')); return Number.isInteger(v) && v > 0 ? v : null; })();
+let viewingCurrent = true;
+const levelQuery = () => (track === null ? '' : `level=${track}`);
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 const reduced = reducedMotion();
 const FONT = "'Atkinson Hyperlegible Next', system-ui, sans-serif";
@@ -28,6 +34,7 @@ let firstCounter = true;
 let lastDeaths = -1;
 let zones: ChartZone[] = [];
 function showCounter(c: Counter): void {
+  if (!viewingCurrent && !firstCounter) return; // a past level's numbers don't change
   flip.set(c.deaths, !firstCounter && !reduced && c.deaths > lastDeaths);
   firstCounter = false;
   lastDeaths = c.deaths;
@@ -159,7 +166,7 @@ function row(r: RunJson, now: number, recordRun: number | null): string {
 async function loadPage(push = false): Promise<void> {
   list.classList.add('loading');
   try {
-    const data = await getJson<RunPage>(`/api/runs?page=${page}${best ? '&best=1' : ''}`);
+    const data = await getJson<RunPage>(`/api/runs?page=${page}${best ? '&best=1' : ''}${track === null ? '' : `&${levelQuery()}`}`);
     page = data.page;
     recordProgress = data.record?.progress ?? recordProgress;
     const now = Date.now();
@@ -170,7 +177,10 @@ async function loadPage(push = false): Promise<void> {
       ? `The ${fmt(data.total)} runs, furthest first.`
       : `${fmt(data.total)} runs, newest first.`;
     pager(data);
-    if (push) history.replaceState(null, '', `/runs${best || page > 1 ? `?${new URLSearchParams({ ...(best ? { best: '1' } : {}), ...(page > 1 ? { page: String(page) } : {}) })}` : ''}`);
+    if (push) {
+      const q = new URLSearchParams({ ...(track !== null && !viewingCurrent ? { level: String(track) } : {}), ...(best ? { best: '1' } : {}), ...(page > 1 ? { page: String(page) } : {}) });
+      history.replaceState(null, '', `/runs${[...q].length ? `?${q}` : ''}`);
+    }
     notice('');
   } catch {
     notice('The history book is catching its breath. The runs will be back in a moment.');
@@ -214,20 +224,55 @@ function notice(text: string): void {
   n.classList.toggle('show', !!text);
 }
 
+// ---- which level ---------------------------------------------------------------------------
+/** A pill per level once there is more than one (default: the level being played). */
+async function mountLevels(): Promise<void> {
+  try {
+    const l = await getJson<{ current: number; levels: LevelItem[] }>('/api/levels');
+    if (l.levels.length < 2) return;
+    const nav = document.createElement('div');
+    nav.className = 'seg levels';
+    nav.setAttribute('role', 'group');
+    nav.setAttribute('aria-label', 'Which level');
+    const label = (x: LevelItem) => (x.encore ? `Level ${x.levelId} encore` : `Level ${x.levelId}`);
+    nav.innerHTML = l.levels.map((x) => `<button type="button" data-track="${x.track}" aria-pressed="${(track ?? l.current) === x.track}" title="${esc(x.name)}${x.beaten ? ' (beaten)' : ''}">${esc(label(x))}${x.beaten ? ' <span aria-hidden="true">★</span>' : ''}${x.current ? ' <i class="live" aria-hidden="true"></i>' : ''}</button>`).join('');
+    $('level-name').insertAdjacentElement('beforebegin', nav);
+    nav.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-track]');
+      if (!b) return;
+      const t = Number(b.dataset.track);
+      if (t === (track ?? l.current)) return;
+      track = t;
+      for (const x of nav.querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b));
+      page = 1;
+      void loadSummary().then(() => loadPage(true));
+    });
+  } catch { /* one level: no picker */ }
+}
+
+async function loadSummary(): Promise<void> {
+  const s = await getJson<Summary>(`/api/summary${track === null ? '' : `?${levelQuery()}`}`);
+  viewingCurrent = s.current !== false;
+  zones = s.zones;
+  recordProgress = s.record?.progress ?? 0;
+  $('level-name').textContent = `${s.levelName} · ${viewingCurrent ? 'every attempt so far' : s.encore ? 'the encore' : 'every attempt it took'}`;
+  const words = document.querySelector('.h-words');
+  if (words) words.textContent = viewingCurrent ? 'deaths so far' : 'deaths it took';
+  $('attempts').textContent = fmt(s.attempts);
+  firstCounter = true;
+  showCounter(s);
+  showZones(s);
+  chart = { series: s.series, records: s.records, zones: s.zones, lastRun: Math.max(s.attempts, s.series.at(-1)?.[0] ?? 1), bucket: s.bucket };
+  canvas.setAttribute('aria-label', chartLabel(s));
+  animateIn();
+}
+
 // ---- go ------------------------------------------------------------------------------------
 async function boot(): Promise<void> {
+  void mountLevels();
   try {
     await document.fonts?.ready;
-    const s = await getJson<Summary>('/api/summary');
-    zones = s.zones;
-    recordProgress = s.record?.progress ?? 0;
-    $('level-name').textContent = `${s.levelName} · every attempt so far`;
-    $('attempts').textContent = fmt(s.attempts);
-    showCounter(s);
-    showZones(s);
-    chart = { series: s.series, records: s.records, zones: s.zones, lastRun: Math.max(s.attempts, s.series.at(-1)?.[0] ?? 1), bucket: s.bucket };
-    canvas.setAttribute('aria-label', chartLabel(s));
-    animateIn();
+    await loadSummary();
   } catch {
     notice('The history book is catching its breath. The chart will be back in a moment.');
   }

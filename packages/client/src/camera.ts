@@ -67,6 +67,18 @@ export class CameraRig {
   private swoopT = 0;
   private swoopDur = 1;
   private swoopReduced = false;
+  /** Celebrating: a fixed framing instead of the look-ahead, or null. */
+  private framing: number | null = null;
+
+  /**
+   * The win: frame the blob for the party instead of looking ahead (the level ends just
+   * ahead). Wide views put it toward the right with the conquered level behind it, clear
+   * of the win card in the middle; tall views center it under the card.
+   */
+  celebrate(on: boolean, phone: boolean): void {
+    this.framing = on ? (phone ? 0 : -1.35) : null;
+    if (!on && this.lookGoal !== this.pendingDir) this.lookGoal = this.pendingDir;
+  }
 
   /** Drop all easing (e.g. after the tab comes back): the next update lands on target. */
   snap(): void {
@@ -134,6 +146,7 @@ export class CameraRig {
     if (dir !== this.pendingDir) { this.pendingDir = dir; this.pendingT = 0; }
     this.pendingT += dt;
     if (this.pendingT >= LOOK_DWELL_S) this.lookGoal = this.pendingDir;
+    if (this.framing !== null) this.lookGoal = this.framing;
     this.look = stepLook(this.look, this.lookGoal, dt);
 
     // vertical deadzone; settle onto the floor height when standing

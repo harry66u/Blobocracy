@@ -1,6 +1,8 @@
 // Timing and words for the game's big moments: the death beat (freeze, flash, counter
 // flip, card), the split-flap digit flip, the new-zone banner and the swoop back to the
-// start. Pure functions of elapsed time, so the renderer and the tests agree.
+// start, and the win (slow motion, the crown, fireworks, the card) and the level-up.
+// Pure functions of elapsed time, so the renderer and the tests agree.
+import { CELEBRATE_S } from '@blobocracy/shared';
 
 // ---- death -------------------------------------------------------------------------
 
@@ -102,28 +104,28 @@ export interface BannerFrame {
   scale: number;
 }
 
-/** The banner `age` seconds after the zone was entered. */
-export function bannerFrame(age: number, reduced: boolean): BannerFrame {
-  if (age < 0 || age > BANNER_S) return { visible: false, y: 0, alpha: 0, rot: 0, scale: 1 };
+/** The banner `age` seconds after the zone was entered (`life`: how long it stays up). */
+export function bannerFrame(age: number, reduced: boolean, life = BANNER_S): BannerFrame {
+  if (age < 0 || age > life) return { visible: false, y: 0, alpha: 0, rot: 0, scale: 1 };
   if (reduced) {
-    const alpha = Math.min(1, age / 0.25, (BANNER_S - age) / 0.3);
+    const alpha = Math.min(1, age / 0.25, (life - age) / 0.3);
     return { visible: true, y: 0, alpha, rot: 0, scale: 1 };
   }
   let y = 0, rot = 0, scale = 1;
   if (age < DROP_S) {
     y = -(1 - backOut(age / DROP_S, 2.4)) * 1.8;
     rot = -0.12 * (1 - age / DROP_S);
-  } else if (age < BANNER_S - LEAVE_S) {
+  } else if (age < life - LEAVE_S) {
     const q = age - DROP_S;
     // landed: a little damped wobble and a squash
     rot = 0.07 * Math.exp(-q * 5) * Math.sin(q * 16);
     scale = 1 + 0.05 * Math.exp(-q * 7) * Math.sin(q * 20 + 1.2);
   } else {
-    const p = (age - (BANNER_S - LEAVE_S)) / LEAVE_S;
+    const p = (age - (life - LEAVE_S)) / LEAVE_S;
     y = -p * p * p * 1.9 + 0.12 * Math.sin(p * Math.PI);
     rot = 0.08 * p;
   }
-  const alpha = Math.min(1, age / 0.08, (BANNER_S - age) / 0.12);
+  const alpha = Math.min(1, age / 0.08, (life - age) / 0.12);
   return { visible: true, y, alpha, rot, scale };
 }
 
@@ -160,4 +162,155 @@ export function swoopFrame(t: number, dur: number, reduced: boolean): SwoopFrame
   const w = 1 - Math.pow(1 - p, 1.4);
   const k = w < 0.5 ? 4 * w * w * w : 1 - Math.pow(-2 * w + 2, 3) / 2;
   return { k: p >= 1 ? 1 : p <= 0 ? 0 : k, fade: 0, done };
+}
+
+// ---- the win (spec §6.7) -----------------------------------------------------------
+
+/** Slow motion at the touch, easing back to full speed over this long. */
+export const WIN_SLOW_S = 1.5;
+/** The crown lifts off its pedestal and arcs onto the blob's head between these ages. */
+export const CROWN_FLY_FROM = 0.22, CROWN_FLY_TO = 0.95;
+/** The big banner card drops in and lifts away (both well inside the server's CELEBRATE_S). */
+export const WIN_BANNER_IN = 2.1;
+export const WIN_BANNER_OUT = CELEBRATE_S - 1.6;
+const WIN_BANNER_LEAVE = 0.5;
+/** Fireworks fill the sky from the crown pop until shortly before the level-up. */
+export const FIREWORKS_FROM = 0.75, FIREWORKS_TO = CELEBRATE_S - 2.5;
+/** The counter cards hop in a wave this often (each wave lasts CASCADE_S). */
+export const CASCADE_FROM = 1.0, CASCADE_EVERY = 4.5, CASCADE_S = 1.8;
+
+export interface WinFx {
+  /** World animation speed (slow motion at the touch). */
+  timeScale: number;
+  /** Golden flash over the world, 0..1. */
+  flash: number;
+  /** The crown's glow and light rays, 0..1. */
+  glow: number;
+  /** 0 on its pedestal, (0,1) flying to the head, 1 worn. */
+  crown: number;
+  fireworks: boolean;
+  /** Seconds into the current counter-card wave, or null between waves. */
+  cascade: number | null;
+  /** Seconds the banner card has been up, or null when it is not. */
+  banner: number | null;
+}
+
+const smooth = (k: number) => k * k * (3 - 2 * k);
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** The celebration `t` seconds after the win. */
+export function winFx(t: number, reduced: boolean): WinFx {
+  if (t < 0) return { timeScale: 1, flash: 0, glow: 0, crown: 0, fireworks: false, cascade: null, banner: null };
+  const timeScale = reduced ? 1 : 0.2 + 0.8 * smooth(clamp01(t / WIN_SLOW_S));
+  const flash = (reduced ? 0.25 : 0.55) * Math.pow(clamp01(1 - t / 0.6), 2);
+  const glow = t < 0.15 ? t / 0.15 : t < 1.6 ? 1 : Math.max(0, 1 - (t - 1.6) / 1.2);
+  const crown = reduced ? (t < 0.5 ? 0 : 1) : clamp01((t - CROWN_FLY_FROM) / (CROWN_FLY_TO - CROWN_FLY_FROM));
+  const fireworks = !reduced && t >= FIREWORKS_FROM && t < FIREWORKS_TO;
+  let cascade: number | null = null;
+  if (t >= CASCADE_FROM && t < CELEBRATE_S - 2) {
+    const c = (t - CASCADE_FROM) % CASCADE_EVERY;
+    if (c < CASCADE_S) cascade = c;
+  }
+  const banner = t >= WIN_BANNER_IN && t < WIN_BANNER_OUT ? t - WIN_BANNER_IN : null;
+  return { timeScale, flash, glow, crown, fireworks, cascade, banner };
+}
+
+export interface WinBannerFrame { y: number; alpha: number; rot: number; scale: number }
+
+/** The win card `age` seconds after it starts dropping in. */
+export function winBannerFrame(age: number, reduced: boolean): WinBannerFrame {
+  const life = WIN_BANNER_OUT - WIN_BANNER_IN;
+  const out = clamp01((age - (life - WIN_BANNER_LEAVE)) / WIN_BANNER_LEAVE);
+  if (reduced) return { y: 0, alpha: Math.min(clamp01(age / 0.35), 1 - out), rot: 0, scale: 1 };
+  const k = clamp01(age / 0.6);
+  const y = -(1 - backOut(k, 2.2)) * 1.25 - out * out * 1.4;
+  const settle = Math.max(0, age - 0.55);
+  const rot = -0.1 * (1 - k) * (1 - k) + 0.05 * Math.exp(-settle * 4) * Math.sin(settle * 13) + out * 0.08;
+  const scale = 1 + 0.04 * Math.exp(-settle * 5) * Math.sin(settle * 18 + 1);
+  return { y, alpha: Math.min(1, age / 0.06) * (1 - out * out), rot, scale };
+}
+
+export interface WinWords {
+  title: string;
+  line: string;
+  stats: { big: string; small: string }[];
+  /** The footer `secondsLeft` before the next level. */
+  next: (secondsLeft: number) => string;
+}
+
+/** "8:14", "1:02:09". */
+export function clockTime(s: number): string {
+  const t = Math.max(0, Math.round(s));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+const fmtN = (n: number) => Math.round(n).toLocaleString('en-US');
+
+/** The words on the win card. */
+export function winLines(
+  w: { levelId: number; run: number; deaths: number; durationS: number; peakPlayers: number },
+  ctx: { name: string; next: { levelId: number; name: string } | null; encore: boolean },
+): WinWords {
+  const what = ctx.encore ? 'Encore' : `Level ${w.levelId}`;
+  return {
+    title: 'The internet did it!',
+    line: `${what} beaten after ${fmtN(w.deaths)} ${w.deaths === 1 ? 'death' : 'deaths'}`,
+    stats: [
+      { big: `Run ${fmtN(w.run)}`, small: 'made it' },
+      { big: clockTime(w.durationS), small: 'run time' },
+      { big: fmtN(w.peakPlayers), small: w.peakPlayers === 1 ? 'peak player' : 'peak players' },
+    ],
+    next: (left) => {
+      const n = Math.max(1, Math.ceil(left));
+      return ctx.next ? `Level ${ctx.next.levelId} unlocks in ${n}` : `A new level is coming. Encore in ${n}`;
+    },
+  };
+}
+
+// ---- level-up transition -----------------------------------------------------------
+
+/** The old level shrinks into a card and flies off, the new one slides in and fills the screen. */
+export const LEVELUP_S = 5.4;
+const LU_SHRINK = 0.9, LU_SWAP0 = 0.85, LU_SWAP1 = 1.75, LU_GROW0 = 2.15, LU_GROW1 = 3.0;
+const LU_BANNER_AT = 1.5;
+
+export interface LevelUpFrame {
+  /** Old level card (a snapshot of the last frame): scale, x offset (fraction of the view width), tilt (radians), alpha. */
+  oldScale: number; oldX: number; oldRot: number; oldAlpha: number;
+  /** New level card (live). */
+  newScale: number; newX: number; newRot: number; newAlpha: number;
+  /** Seconds the "Level 2 unlocked" banner has been up, or null. */
+  banner: number | null;
+  /** The card frames (white border) fade out as the new level fills the screen, 0..1. */
+  frame: number;
+  done: boolean;
+}
+
+export function levelUpFrame(t: number, reduced: boolean): LevelUpFrame {
+  const done = t >= LEVELUP_S;
+  const banner = t >= LU_BANNER_AT && t < LEVELUP_S ? t - LU_BANNER_AT : null;
+  if (reduced) {
+    const k = clamp01(t / 0.9);
+    return { oldScale: 1, oldX: 0, oldRot: 0, oldAlpha: 1 - k, newScale: 1, newX: 0, newRot: 0, newAlpha: k, banner, frame: 0, done };
+  }
+  const SMALL = 0.56;
+  const shrink = smooth(clamp01(t / LU_SHRINK));
+  const swap = clamp01((t - LU_SWAP0) / (LU_SWAP1 - LU_SWAP0));
+  const swapIn = clamp01((t - LU_SWAP0 - 0.25) / (LU_SWAP1 - LU_SWAP0));
+  const grow = clamp01((t - LU_GROW0) / (LU_GROW1 - LU_GROW0));
+  const oldScale = 1 - (1 - SMALL) * shrink;
+  const oldX = -1.25 * swap * swap;
+  const oldRot = -0.07 * shrink - 0.35 * swap * swap;
+  const inK = backOut(swapIn, 1.4);
+  const g = backOut(grow, 1.1);
+  const newScale = SMALL + (1 - SMALL) * g;
+  const newX = (1 - inK) * 1.25;
+  const newRot = (0.06 * (1 - inK) + 0.05) * (1 - g);
+  const frame = done ? 0 : t < LU_GROW0 ? Math.min(1, t / 0.4) : 1 - grow;
+  return {
+    oldScale, oldX, oldRot, oldAlpha: swap >= 1 ? 0 : 1,
+    newScale: done ? 1 : newScale, newX: done ? 0 : newX, newRot: done ? 0 : newRot, newAlpha: swapIn > 0 ? 1 : 0,
+    banner, frame, done,
+  };
 }

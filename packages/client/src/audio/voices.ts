@@ -387,3 +387,118 @@ export function cheerSound(k: Kit, out: AudioNode, t: number, kind: 'zone' | 're
     w.connect(wg).connect(bus);
   }
 }
+
+// ---- the win -------------------------------------------------------------------
+
+/** One brassy note: two detuned saws and a square through a lowpass that opens with the attack. */
+function brass(k: Kit, out: AudioNode, t: number, f: number, dur: number, level: number, pan = 0): void {
+  const end = t + dur + 0.25;
+  const g = gain(k);
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(level, t + 0.025);
+  g.gain.setTargetAtTime(level * 0.72, t + 0.03, 0.12);
+  g.gain.setTargetAtTime(0, t + dur, 0.08);
+  const lp = filter(k, 'lowpass', 900, 1.2);
+  lp.frequency.setValueAtTime(700, t);
+  lp.frequency.linearRampToValueAtTime(3200, t + 0.05);
+  lp.frequency.setTargetAtTime(1900, t + 0.06, 0.2);
+  for (const [type, mul, det] of [['sawtooth', 1, -7], ['sawtooth', 1, 7], ['square', 0.5, 0]] as const) {
+    const o = osc(k, type, f * mul, t, end);
+    o.detune.value = det;
+    // a little lip-buzz scoop into the note
+    o.frequency.setValueAtTime(f * mul * 0.97, t);
+    o.frequency.exponentialRampToValueAtTime(f * mul, t + 0.04);
+    const og = gain(k, type === 'square' ? 0.35 : 0.5);
+    o.connect(og).connect(lp);
+  }
+  lp.connect(g).connect(panner(k, pan)).connect(out);
+}
+
+/** A timpani hit: a low sine with a pitch drop and a soft mallet click. */
+function timpani(k: Kit, out: AudioNode, t: number, f: number, level: number): void {
+  const g = gain(k);
+  const end = perc(g.gain, t, 0.004, level, 1.1);
+  const o = osc(k, 'sine', f * 1.5, t, end + 0.02);
+  o.frequency.exponentialRampToValueAtTime(f, t + 0.08);
+  o.connect(g).connect(out);
+  const ng = gain(k);
+  const ne = perc(ng.gain, t, 0.001, level * 0.4, 0.06);
+  noise(k, t, ne - t + 0.01).connect(filter(k, 'lowpass', 900, 0.7)).connect(ng).connect(out);
+}
+
+/** A cymbal swell into a crash. */
+function cymbal(k: Kit, out: AudioNode, t: number, swell: number, level: number): void {
+  const g = gain(k);
+  g.gain.setValueAtTime(0, t - swell);
+  g.gain.linearRampToValueAtTime(level * 0.5, t);
+  g.gain.setValueAtTime(level, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(EPS, t + 1.8);
+  g.gain.setValueAtTime(0, t + 1.8);
+  noise(k, t - swell, swell + 1.82).connect(filter(k, 'highpass', 5200, 0.6)).connect(g).connect(out);
+}
+
+/** Bright little chimes sprinkled over the top. */
+function chime(k: Kit, out: AudioNode, t: number, f: number, level: number, pan: number): void {
+  const g = gain(k);
+  const end = perc(g.gain, t, 0.003, level, 0.7);
+  osc(k, 'triangle', f, t, end + 0.02).connect(g);
+  const g2 = gain(k, 0.3);
+  osc(k, 'sine', f * 3.01, t, end + 0.02).connect(g2).connect(g);
+  g.connect(panner(k, pan)).connect(out);
+}
+
+/**
+ * The win fanfare (about 3.5 s): timpani, a rising brass call "ta-ta-ta-taaa", an answer,
+ * and a big held major chord over a cymbal crash, with chimes sparkling on top.
+ */
+export function fanfareSound(k: Kit, out: AudioNode, t: number): void {
+  const bus = gain(k, 0.9);
+  bus.connect(out);
+  const C5 = 523.25, E5 = 659.25, G5 = 783.99, C6 = 1046.5, G4 = 392.0, E4 = 329.63, C4 = 261.63;
+  timpani(k, bus, t, 98, 0.55);
+  timpani(k, bus, t + 0.15, 98, 0.4);
+  timpani(k, bus, t + 0.3, 98, 0.45);
+  // call
+  brass(k, bus, t, G4, 0.12, 0.16, -0.2);
+  brass(k, bus, t + 0.15, C5, 0.12, 0.16, -0.1);
+  brass(k, bus, t + 0.3, E5, 0.12, 0.16, 0.1);
+  brass(k, bus, t + 0.45, G5, 0.42, 0.18, 0.2);
+  // answer
+  brass(k, bus, t + 0.95, E5, 0.12, 0.15, -0.1);
+  brass(k, bus, t + 1.1, G5, 0.12, 0.15, 0.1);
+  timpani(k, bus, t + 1.25, 131, 0.6);
+  cymbal(k, bus, t + 1.25, 0.35, 0.12);
+  // the big chord
+  for (const [f, p] of [[C6, 0.25], [G5, 0.1], [E5, -0.1], [C5, -0.25], [G4, 0.2], [E4, -0.2], [C4, 0]] as const) brass(k, bus, t + 1.25, f, 1.9, 0.085, p);
+  // chimes
+  const arp = [C6, 1318.5, 1568, 2093, 1568, 2093, 2637];
+  arp.forEach((f, i) => chime(k, bus, t + 1.35 + i * 0.11, f, 0.07, (i % 3 - 1) * 0.6));
+}
+
+/** "Level up": a rising whoosh into a bright chord stab and a chime run. */
+export function levelUpSound(k: Kit, out: AudioNode, t: number): void {
+  const bus = gain(k, 0.9);
+  bus.connect(out);
+  // whoosh
+  const wg = gain(k);
+  wg.gain.setValueAtTime(0, t);
+  wg.gain.linearRampToValueAtTime(0.22, t + 0.5);
+  wg.gain.exponentialRampToValueAtTime(EPS, t + 0.75);
+  wg.gain.setValueAtTime(0, t + 0.75);
+  const bp = filter(k, 'bandpass', 300, 2.5);
+  bp.frequency.setValueAtTime(300, t);
+  bp.frequency.exponentialRampToValueAtTime(4200, t + 0.6);
+  noise(k, t, 0.8).connect(bp).connect(wg).connect(bus);
+  // rising glide
+  const sg = gain(k);
+  const send = perc(sg.gain, t, 0.45, 0.07, 0.25);
+  const so = osc(k, 'triangle', 220, t, send + 0.02);
+  so.frequency.exponentialRampToValueAtTime(880, t + 0.6);
+  so.connect(sg).connect(bus);
+  // stab: D major, bright
+  const s0 = t + 0.62;
+  for (const [f, p] of [[587.33, -0.2], [739.99, 0], [880, 0.2], [1174.66, 0.1]] as const) brass(k, bus, s0, f, 0.55, 0.09, p);
+  timpani(k, bus, s0, 147, 0.5);
+  cymbal(k, bus, s0, 0.05, 0.08);
+  [1174.66, 1479.98, 1760, 2349.3].forEach((f, i) => chime(k, bus, s0 + 0.12 + i * 0.09, f, 0.08, (i % 2 ? 0.5 : -0.5)));
+}

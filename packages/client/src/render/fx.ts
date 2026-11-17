@@ -152,10 +152,11 @@ export function bannerBox(L: Layout): { cy: number; h: number } {
  * the top with a playful tilt and bounce. Fades back if the blob climbs up under it.
  */
 export function drawBanner(g: CanvasRenderingContext2D, L: Layout, b: SceneBanner, reduced: boolean, blobTopY: number): void {
-  const f = bannerFrame(b.age, reduced);
+  const f = bannerFrame(b.age, reduced, b.life);
   if (!f.visible) return;
-  const s = uiScale(L);
+  const s = uiScale(L) * (b.big ? (L.phone ? 1.12 : 1.3) : 1);
   const box = bannerBox(L);
+  if (b.big) box.cy = L.phone ? L.h * 0.3 : L.h * 0.27;
   const nameSize = (L.phone ? 34 : 50) * s;
   let font = `${nameSize.toFixed(1)}px ${FONT_DISPLAY}`;
   g.font = font;
@@ -235,7 +236,7 @@ export function drawBanner(g: CanvasRenderingContext2D, L: Layout, b: SceneBanne
   g.fillText(b.name, 0, size * 0.06);
 
   // "Zone 3" sticker over the top-left corner, tilted the other way
-  const label = `Zone ${b.index + 1}`;
+  const label = b.label ?? `Zone ${b.index + 1}`;
   const lf = `${((L.phone ? 15 : 18) * s).toFixed(1)}px ${FONT_DISPLAY}`;
   g.font = lf;
   const lw = g.measureText(label).width + 26 * s, lh = (L.phone ? 27 : 32) * s;
@@ -266,26 +267,37 @@ export function drawBanner(g: CanvasRenderingContext2D, L: Layout, b: SceneBanne
 
 // ---- confetti -----------------------------------------------------------------------
 
-const COLORS = ['#FFFFFF', BLOB, HAZARD] as const;
+const COLORS: readonly string[] = ['#FFFFFF', BLOB, HAZARD];
 const MAX = 160;
 
 /** Confetti in screen space: bursts from the top edge (zones) or from a point (records). */
 export class Confetti {
   private n = 0;
-  private readonly x = new Float32Array(MAX);
-  private readonly y = new Float32Array(MAX);
-  private readonly vx = new Float32Array(MAX);
-  private readonly vy = new Float32Array(MAX);
-  private readonly rot = new Float32Array(MAX);
-  private readonly vr = new Float32Array(MAX);
-  private readonly ph = new Float32Array(MAX);
-  private readonly vph = new Float32Array(MAX);
-  private readonly size = new Float32Array(MAX);
-  private readonly kind = new Uint8Array(MAX);
-  private readonly color = new Uint8Array(MAX);
-  private readonly life = new Float32Array(MAX);
+  private readonly x: Float32Array;
+  private readonly y: Float32Array;
+  private readonly vx: Float32Array;
+  private readonly vy: Float32Array;
+  private readonly rot: Float32Array;
+  private readonly vr: Float32Array;
+  private readonly ph: Float32Array;
+  private readonly vph: Float32Array;
+  private readonly size: Float32Array;
+  private readonly kind: Uint8Array;
+  private readonly color: Uint8Array;
+  private readonly life: Float32Array;
   private seed = 1;
   private gentle = false;
+
+  /** `max` pieces at once; `colors` to pick from (default white, yellow, pink). */
+  constructor(private readonly max = MAX, private readonly colors: readonly string[] = COLORS) {
+    const f = () => new Float32Array(max);
+    this.x = f(); this.y = f(); this.vx = f(); this.vy = f(); this.rot = f(); this.vr = f(); this.ph = f(); this.vph = f(); this.size = f(); this.life = f();
+    this.kind = new Uint8Array(max);
+    this.color = new Uint8Array(max);
+  }
+
+  /** Drop everything (e.g. a clip seeks back). */
+  clear(): void { this.n = 0; }
 
   private rnd(): number {
     this.seed = (this.seed * 16807) % 2147483647;
@@ -293,7 +305,7 @@ export class Confetti {
   }
 
   private add(x: number, y: number, vx: number, vy: number, size: number): void {
-    const i = this.n < MAX ? this.n++ : Math.floor(this.rnd() * MAX);
+    const i = this.n < this.max ? this.n++ : Math.floor(this.rnd() * this.max);
     this.x[i] = x; this.y[i] = y; this.vx[i] = vx; this.vy[i] = vy;
     this.rot[i] = this.rnd() * Math.PI * 2;
     this.vr[i] = (this.rnd() - 0.5) * 9;
@@ -301,16 +313,16 @@ export class Confetti {
     this.vph[i] = 5 + this.rnd() * 9;
     this.size[i] = size * (0.75 + this.rnd() * 0.5);
     this.kind[i] = Math.floor(this.rnd() * 3);
-    this.color[i] = Math.floor(this.rnd() * 3);
+    this.color[i] = Math.floor(this.rnd() * this.colors.length);
     this.life[i] = 4.5;
   }
 
   /** A shower from the whole top edge. */
-  burstTop(L: Layout, reduced: boolean, seed: number): void {
+  burstTop(L: Layout, reduced: boolean, seed: number, scale = 1): void {
     this.seed = 1 + (seed * 7919) % 2147483646;
     this.gentle = reduced;
     const s = uiScale(L);
-    const count = reduced ? 16 : L.phone ? 70 : 130;
+    const count = Math.round((reduced ? 16 : L.phone ? 70 : 130) * scale);
     for (let k = 0; k < count; k++) {
       const x = this.rnd() * L.w;
       const fromMid = (x - L.w / 2) / (L.w / 2);
@@ -326,6 +338,18 @@ export class Confetti {
       const a = -Math.PI / 2 + (this.rnd() - 0.5) * Math.PI * 1.4;
       const sp = (reduced ? 60 : 160 + this.rnd() * 260) * s;
       this.add(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 10 * s);
+    }
+  }
+
+  /** A cannon blast of confetti from (x, y) toward `angle` (radians; -π/2 is straight up). */
+  burstCannon(x: number, y: number, angle: number, s: number, reduced: boolean, seed: number, count = 70): void {
+    this.seed = 1 + (seed * 15485863) % 2147483646;
+    this.gentle = reduced;
+    const n = reduced ? Math.round(count / 5) : count;
+    for (let k = 0; k < n; k++) {
+      const a = angle + (this.rnd() - 0.5) * 0.7;
+      const sp = (reduced ? 120 : 650 + this.rnd() * 650) * s;
+      this.add(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 13 * s);
     }
   }
 
@@ -371,7 +395,7 @@ export class Confetti {
       g.translate(this.x[i]!, this.y[i]!);
       g.rotate(this.rot[i]!);
       g.scale(Math.abs(flip) < 0.15 ? 0.15 * Math.sign(flip || 1) : flip, 1);
-      g.fillStyle = COLORS[this.color[i]!]!;
+      g.fillStyle = this.colors[this.color[i]!]!;
       g.beginPath();
       if (this.kind[i] === 0) g.roundRect(-sz * 0.6, -sz * 0.32, sz * 1.2, sz * 0.64, sz * 0.12);
       else if (this.kind[i] === 1) g.arc(0, 0, sz * 0.42, 0, Math.PI * 2);

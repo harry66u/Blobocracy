@@ -50,6 +50,19 @@ npm run dev -- --seed 2000
 
 then open http://localhost:5173/runs (every attempt, the chart, the list) and http://localhost:5173/hall. Records and near misses (dying within 5% of the record) become clips automatically; the death card offers "Share the clip", which opens `/c/<id>`.
 
+### Winning a level (and seeing it locally)
+
+When the blob reaches the golden crown alive, the whole world celebrates for 25 seconds (inputs are ignored): slow motion, the crown pops onto the blob's head, fireworks, and a card with the run's numbers and "Share the clip". The level gets a permanent hall of fame entry and a 60 second win clip, then the next level unlocks with its own death counter, run numbers and record. When the last level is beaten it plays on as an encore with a fresh counter, and the hall of fame says a new level is coming.
+
+To watch it without beating the level, start the game with an admin token and ask the sim to put the blob just before the goal (refused when `NODE_ENV=production`), then hold right:
+
+```bash
+ADMIN_TOKEN=dev npm run dev
+curl -X POST -H 'Authorization: Bearer dev' http://localhost:5173/admin/debug/win
+```
+
+`npx tsx tools/win-shots.ts` does all of it headless and writes screenshots of the celebration and the level-up, the win clip page and a vertical video export to `tools/out/win/`.
+
 With real services (what production uses):
 
 | Variable | Who | What |
@@ -115,7 +128,7 @@ Every variable, with its default and which process reads it, is documented at th
 |---|---|---|
 | `SESSION_SECRET` | edge | Signs session tokens (required in production). |
 | `RELAY_SECRET` | sim, edge | Shared secret for the relay ↔ sim link. |
-| `ADMIN_TOKEN` | sim | Bearer token for `/admin/*` (stats, bans, budget). Unset = admin off. |
+| `ADMIN_TOKEN` | sim | Bearer token for `/admin/*` (stats, bans, budget; `POST /admin/debug/win` outside production). Unset = admin off. |
 | `DATABASE_URL` | sim | Postgres. Unset = history in memory only. |
 | `REDIS_URL` | sim, edge | Live snapshot, budget counters, shared per-IP caps. Unset = files on the sim volume. |
 | `ALERT_WEBHOOK_URL` | sim | Discord/Slack webhook for budget alerts. |

@@ -54,6 +54,10 @@ try {
   for (const k of ['jump', 'land', 'cheer'] as const) {
     if (win('mix-z2', k).rmsDb < music + 3) failures.push(`${k} is not clearly audible over the music (${win('mix-z2', k).rmsDb.toFixed(1)} vs ${music.toFixed(1)} dBFS)`);
   }
+  if (win('win', 'fanfare').rmsDb < win('win', 'music').rmsDb + 6) failures.push('win fanfare is not clearly louder than the music');
+  if (win('win', 'back').rmsDb < -40) failures.push('win: the music did not come back after the fanfare');
+  if (win('level-up', 'sting').rmsDb < -30) failures.push('level-up sting is too quiet');
+  if (win('level-up', 'music').rmsDb < -40) failures.push('level-up: the music did not start over');
   if (win('music-z5', 'steady').rmsDb <= win('music-z0', 'steady').rmsDb) failures.push('zone 6 music is not more intense than zone 1');
   console.log(`\nWAV files in ${out}/`);
 } finally {

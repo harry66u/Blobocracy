@@ -3,7 +3,7 @@
 // (death freeze/pose/flip/card, zone banners, record pop, the swoop back), and the same
 // world sounds. Pure and deterministic: the same clip times give the same scenes, so the
 // page preview and the exported video match.
-import { TICK_HZ, decodeFrame, progressOf, type Level, type Replay, type ServerEvent, type StateFrame } from '@blobocracy/shared';
+import { TICK_HZ, decodeFrame, levelTitle, progressOf, type Level, type Replay, type ServerEvent, type StateFrame } from '@blobocracy/shared';
 import { CameraRig } from '../camera.ts';
 import { Director } from '../director.ts';
 import { keepDeathCard } from '../hudstate.ts';
@@ -12,6 +12,7 @@ import { DEATH_SHAKE, swoopDuration } from '../moments.ts';
 import { bodyFromFrame } from '../predict.ts';
 import type { Scene, SceneDot, SceneLevel } from '../render/scene.ts';
 import { composeScene, sceneBlob, sceneDots, sceneLevelOf, WorldSounds, type WorldSoundSink } from '../scenemap.ts';
+import { hudLevelLabel, levelView } from '../levels.ts';
 
 /** The sounds a clip makes (a subset of GameAudio). */
 export interface ClipAudioSink extends WorldSoundSink {
@@ -19,6 +20,8 @@ export interface ClipAudioSink extends WorldSoundSink {
   death(): void;
   cheer(kind: 'zone' | 'record'): void;
   resetToStart(): void;
+  /** The win fanfare (optional for older sinks). */
+  win?(): void;
 }
 
 export interface ClipFrame {
@@ -59,6 +62,8 @@ export class ClipPlayback {
   private cardRun: number | null = null;
   private swoopFromProgress = 0;
   private online = 0;
+  /** The clip's welcome said the level was an encore. */
+  private encore = false;
   private sink: ClipAudioSink = SILENT;
   private readonly dots: SceneDot[] = [];
 
@@ -118,6 +123,7 @@ export class ClipPlayback {
         this.deathCause = null;
         this.cardRun = null;
         this.online = e.online;
+        this.encore = e.encore ?? false;
         this.sink.setZone(e.zone);
         break;
       case 'death':
@@ -146,6 +152,10 @@ export class ClipPlayback {
         this.sink.setZone(e.index);
         this.sink.cheer('zone');
         break;
+      case 'win':
+        this.director.onWin(e, now);
+        this.sink.win?.();
+        break;
     }
   }
 
@@ -173,7 +183,8 @@ export class ClipPlayback {
 
     const body = bodyFromFrame(f);
     let runTime = f.runTime;
-    if (next && f.phase === 'running' && next.phase === 'running' && next.run === f.run && Math.hypot(next.x - f.x, next.y - f.y) < LERP_MAX) {
+    const moving = (ph: StateFrame['phase']) => ph === 'running' || ph === 'celebrating';
+    if (next && moving(f.phase) && moving(next.phase) && next.run === f.run && Math.hypot(next.x - f.x, next.y - f.y) < LERP_MAX) {
       const t0 = this.ticks[this.idx]!, t1 = this.ticks[this.idx + 1]!;
       const a = t1 > t0 ? Math.min(1, Math.max(0, (tickF - t0) / (t1 - t0))) : 0;
       const nb = bodyFromFrame(next);
@@ -183,6 +194,8 @@ export class ClipPlayback {
       body.vy += (nb.vy - body.vy) * a;
       runTime += (next.runTime - f.runTime) * a;
     }
+    // a jump across the level that isn't the swoop back to the start (a sim restart, the admin debug win): cut
+    if (this.pos && Math.abs(body.x - this.pos.x) > 24 && this.rig.swoopK === null) this.rig.snap();
     this.pos = { x: body.x, y: body.y };
     const pos = this.pos;
     const blob = sceneBlob(pos, body, f, this.deathCause);
@@ -197,12 +210,16 @@ export class ClipPlayback {
     const running = f.phase === 'running';
     const progress = progressOf(this.level, blob.x);
     const d = this.director.frame(t, f.run, progress, running);
+    this.rig.celebrate(f.phase === 'celebrating', L.phone);
     let cam = this.rig.update(L, blob, dt, this.reduced);
     const swoopK = this.rig.swoopK;
     const shake = this.rig.shakeOffset();
     cam = { x: cam.x + shake.x, y: cam.y + shake.y };
+    const lv = levelView(this.level.id);
     const scene = composeScene({
       level: this.level, sceneLevel: this.sceneLevel, frame: f, blob, runTime, online: this.online, muted: false, reduced: this.reduced, progress,
+      levelLabel: hudLevelLabel(this.level.id, this.encore), encore: this.encore,
+      levelName: lv?.name ?? levelTitle(this.level), nextLevel: this.encore ? null : lv?.next ?? null, winClip: false,
       dots: sceneDots(f.dots, f.dotJump, this.dots).slice(),
       you: null,
       director: d,

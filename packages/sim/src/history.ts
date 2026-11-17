@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import {
-  TICK_HZ, ReplayRecorder, packReplay, progressOf, zoneAt,
+  CELEBRATE_S, TICK_HZ, ReplayRecorder, packReplay, progressOf, trackId, zoneAt,
   type Level, type ReplayKind, type ServerEvent,
 } from '@blobocracy/shared';
 import type { LiveSnapshot } from './live';
@@ -15,6 +15,8 @@ export const WIN_CLIP_SECONDS = 60;
 export const MIN_RECORD_CLIP = 0.05;
 /** How long the clip API holds a request for a clip that is being made (death → reset ≈ 3.5 s). */
 export const PENDING_WAIT_MS = 8000;
+/** A win clip is saved when the celebration ends, CELEBRATE_S after the win is announced. */
+export const WIN_PENDING_MS = CELEBRATE_S * 1000 + PENDING_WAIT_MS;
 
 export const newClipId = () => randomBytes(6).toString('base64url');
 
@@ -30,6 +32,8 @@ interface Pending { id: string; kind: ReplayKind; run: number; progress: number;
 export interface HistoryOptions {
   store: Store;
   level: Level;
+  /** Playing `level` as an encore (its own track). */
+  encore?: boolean;
   now?: () => number;
   newId?: () => string;
   /** Renders the link-preview PNG for a clip (default: og.ts); null = no image. */
@@ -42,16 +46,26 @@ export interface HistoryOptions {
  * world events, and every broadcast frame. On a death it records the run (and the world row);
  * when the death earns a clip it reserves the clip id right away (so the death card can offer
  * "Share the clip" during the hold) and makes the clip when the run resets.
+ *
+ * A win (spec §6.7, §13) is written at once: the run (cause 'win'), the world row and the hall
+ * of fame entry, with the win clip's id reserved and filled into the win event (with the
+ * level's peak players). The clip (the last 60 s) is made when the celebration ends, on the
+ * 'level' event; then bookkeeping moves to the new level's track (runs, peak, recorder).
  */
 export class History {
-  readonly recorder: ReplayRecorder;
+  recorder: ReplayRecorder;
   readonly store: Store;
-  readonly level: Level;
+  level: Level;
+  encore: boolean;
   runStartedAt: number;
   runPeak = 0;
   runMaxX: number;
+  /** Most players online at once on this track, ever. */
   peakPlayers = 0;
   recordVersion: number | null = null;
+  /** Other tracks' peak players and record versions (track id → value). */
+  private trackPeaks = new Map<number, number>();
+  private trackRecordVersions = new Map<number, number | null>();
   private pending: Pending | null = null;
   private making = new Map<string, Promise<ClipRow | null>>();
   private eventsSinceFrame: ServerEvent[] = [];
@@ -65,13 +79,40 @@ export class History {
   constructor(o: HistoryOptions) {
     this.store = o.store;
     this.level = o.level;
+    this.encore = o.encore ?? false;
     this.now = o.now ?? Date.now;
     this.newId = o.newId ?? newClipId;
     this.renderOg = o.renderOg ?? renderClipOg;
     this.log = o.log ?? console.log;
-    this.recorder = new ReplayRecorder({ levelId: o.level.id, levelVersion: o.level.version, maxSeconds: WIN_CLIP_SECONDS });
+    this.recorder = ReplayRecorderFor(o.level);
     this.runStartedAt = this.now();
     this.runMaxX = o.level.spawn.x;
+  }
+
+  /** Where this level's runs, world row and hall of fame entry are written. */
+  get track(): number { return trackId(this.level.id, this.encore); }
+
+  /** Peak players known for another track (from storage), used when play gets there. */
+  setTrackPeak(track: number, peak: number): void {
+    if (track === this.track) this.peakPlayers = Math.max(this.peakPlayers, peak);
+    else this.trackPeaks.set(track, Math.max(this.trackPeaks.get(track) ?? 0, peak));
+  }
+
+  /** The level changed (after a celebration, or at boot): bookkeeping moves to its track. */
+  switchLevel(level: Level, encore: boolean): void {
+    if (level === this.level && encore === this.encore) return;
+    this.trackPeaks.set(this.track, this.peakPlayers);
+    this.trackRecordVersions.set(this.track, this.recordVersion);
+    this.level = level;
+    this.encore = encore;
+    this.peakPlayers = this.trackPeaks.get(this.track) ?? 0;
+    this.recordVersion = this.trackRecordVersions.get(this.track) ?? null;
+    this.recorder = ReplayRecorderFor(level);
+    this.needWelcome = true;
+    this.eventsSinceFrame = [];
+    this.runStartedAt = this.now();
+    this.runPeak = 0;
+    this.runMaxX = level.spawn.x;
   }
 
   /** Every sim step. */
@@ -93,13 +134,13 @@ export class History {
       else if (e.t === 'death') {
         const setRecord = events.some((x) => x.t === 'record' && x.run === e.run);
         const row: RunRow = {
-          levelId: this.level.id, levelVersion: this.level.version, run: e.run,
+          levelId: this.track, levelVersion: this.level.version, run: e.run,
           startedAt: this.runStartedAt, endedAt: this.now(), durationMs: Math.round((world.runTick * 1000) / TICK_HZ),
           maxProgress: e.progress, maxX: Math.max(this.runMaxX, world.body.x), zoneReached: e.zone, cause: e.cause,
           peakPlayers: this.runPeak, clipId: null,
         };
         void this.store.recordRun(row);
-        void this.store.saveWorld({ levelId: this.level.id, deaths: e.deaths, record: this.recordMark(world), peakPlayers: this.peakPlayers });
+        void this.store.saveWorld({ levelId: this.track, deaths: e.deaths, record: this.recordMark(world), peakPlayers: this.peakPlayers });
         const kind = clipKindFor(e, setRecord);
         if (kind) {
           const id = this.newId();
@@ -112,14 +153,45 @@ export class History {
           };
           out.push({ t: 'clip', id, kind, run: e.run });
         }
+      } else if (e.t === 'win') {
+        this.onWin(e, world, out);
       } else if (e.t === 'reset') {
         this.finishClip();
         this.runStartedAt = this.now();
         this.runPeak = 0;
         this.runMaxX = this.level.spawn.x;
+      } else if (e.t === 'level') {
+        // the celebration is over: the win clip ends here, and the new level starts afresh
+        this.finishClip();
+        this.switchLevel(world.level, world.encore);
       }
     }
     return out;
+  }
+
+  /** Fills in the win event (peak players, clip id) and writes the run, the world row and the hall of fame entry. */
+  private onWin(e: Extract<ServerEvent, { t: 'win' }>, world: World, out: ServerEvent[]): void {
+    const id = this.newId();
+    e.peakPlayers = this.peakPlayers;
+    e.clipId = id;
+    const track = this.track, at = this.now();
+    void this.store.recordRun({
+      levelId: track, levelVersion: this.level.version, run: e.run,
+      startedAt: this.runStartedAt, endedAt: at, durationMs: Math.round(e.durationS * 1000),
+      maxProgress: 1, maxX: Math.max(this.runMaxX, world.body.x), zoneReached: world.zone, cause: 'win',
+      peakPlayers: this.runPeak, clipId: id,
+    });
+    this.recordVersion = this.level.version;
+    void this.store.saveWorld({ levelId: track, deaths: e.deaths, record: this.recordMark(world), peakPlayers: this.peakPlayers });
+    void this.store.addHallOfFame({ levelId: track, beatenAt: at, deathCount: e.deaths, peakPlayers: this.peakPlayers, run: e.run, clipId: id });
+    let resolve!: (c: ClipRow | null) => void;
+    this.making.set(id, new Promise((r) => { resolve = r; }));
+    this.pending = {
+      id, kind: 'win', run: e.run, progress: 1, cause: 'win', deaths: e.deaths, record: null, resolve,
+      sky: this.level.zones[this.level.zones.length - 1]!.sky,
+    };
+    out.push({ t: 'clip', id, kind: 'win', run: e.run });
+    this.log(`[win] level ${this.level.id}${this.encore ? ' (encore)' : ''} beaten by run ${e.run} after ${e.deaths} deaths`);
   }
 
   /** Every broadcast frame (exact bytes), with the events since the previous frame. */
@@ -140,9 +212,10 @@ export class History {
     this.pending = null;
     if (!p) return;
     const replay = this.recorder.snapshot(p.kind, p.kind === 'win' ? WIN_CLIP_SECONDS : CLIP_SECONDS, { run: p.run, progress: p.progress });
-    const done = (c: ClipRow | null) => { p.resolve(c); setTimeout(() => this.making.delete(p.id), PENDING_WAIT_MS); };
+    const done = (c: ClipRow | null) => { p.resolve(c); setTimeout(() => this.making.delete(p.id), PENDING_WAIT_MS).unref?.(); };
+    const level = this.level, track = this.track;
     if (!replay) { done(null); return; }
-    const zoneStarts = this.level.zones.map((z) => progressOf(this.level, z.startX));
+    const zoneStarts = level.zones.map((z) => progressOf(level, z.startX));
     void (async () => {
       try {
         const bytes = await packReplay(replay);
@@ -151,11 +224,11 @@ export class History {
           og = await this.renderOg({ run: p.run, progress: p.progress, cause: p.cause, kind: p.kind, deaths: p.deaths, sky: p.sky, zoneStarts, record: p.record });
         } catch (e) { this.log(`[clips] preview image failed: ${String(e)}`); }
         const row: ClipRow = {
-          id: p.id, levelId: this.level.id, levelVersion: this.level.version, run: p.run, kind: p.kind, createdAt: this.now(),
+          id: p.id, levelId: track, levelVersion: level.version, run: p.run, kind: p.kind, createdAt: this.now(),
           progress: p.progress, cause: p.cause, deaths: p.deaths, replay: bytes, og,
         };
         await this.store.saveClip(row);
-        await this.store.attachClip(this.level.id, p.run, p.id);
+        await this.store.attachClip(track, p.run, p.id);
         this.clipsMade++;
         this.log(`[clips] ${p.kind} clip ${p.id} for run ${p.run} (${Math.round(p.progress * 100)}%, ${bytes.length} bytes)`);
         done(row);
@@ -166,22 +239,35 @@ export class History {
     })();
   }
 
-  /** A clip being made right now (reserved at the death), or null if `id` is not one. */
+  /** A clip being made right now (reserved at the death or win), or null if `id` is not one. */
   whenMade(id: string): Promise<ClipRow | null> | null {
     return this.making.get(id) ?? null;
   }
 
-  /** Bookkeeping fields for the live snapshot. */
-  live(): Pick<LiveSnapshot, 'runStartedAt' | 'runPeak' | 'runMaxX' | 'peakPlayers' | 'recordVersion'> {
-    return { runStartedAt: this.runStartedAt, runPeak: this.runPeak, runMaxX: this.runMaxX, peakPlayers: this.peakPlayers, recordVersion: this.recordVersion };
+  /** How long a request may wait for a clip being made: a win clip comes at the end of the celebration. */
+  waitMs(id: string): number {
+    return this.pending?.id === id && this.pending.kind === 'win' ? WIN_PENDING_MS : PENDING_WAIT_MS;
   }
 
-  restore(s: Pick<LiveSnapshot, 'runStartedAt' | 'runPeak' | 'runMaxX' | 'peakPlayers' | 'recordVersion'>, freshRun: boolean): void {
+  /** Bookkeeping fields for the live snapshot. */
+  live(): Pick<LiveSnapshot, 'runStartedAt' | 'runPeak' | 'runMaxX' | 'peakPlayers' | 'recordVersion' | 'trackPeaks'> {
+    return {
+      runStartedAt: this.runStartedAt, runPeak: this.runPeak, runMaxX: this.runMaxX, peakPlayers: this.peakPlayers, recordVersion: this.recordVersion,
+      trackPeaks: [...this.trackPeaks],
+    };
+  }
+
+  restore(s: Pick<LiveSnapshot, 'runStartedAt' | 'runPeak' | 'runMaxX' | 'peakPlayers' | 'recordVersion' | 'trackPeaks'>, freshRun: boolean): void {
     this.peakPlayers = Math.max(this.peakPlayers, s.peakPlayers);
     this.recordVersion = s.recordVersion;
+    for (const [k, v] of s.trackPeaks ?? []) this.setTrackPeak(k, v);
     if (freshRun) return;
     this.runStartedAt = s.runStartedAt;
     this.runPeak = s.runPeak;
     this.runMaxX = s.runMaxX;
   }
+}
+
+function ReplayRecorderFor(level: Level): ReplayRecorder {
+  return new ReplayRecorder({ levelId: level.id, levelVersion: level.version, maxSeconds: WIN_CLIP_SECONDS });
 }

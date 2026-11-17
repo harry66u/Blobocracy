@@ -53,10 +53,14 @@ describe('API', () => {
 
   test('hall: empty state carries the current level and its deaths; a beaten level shows', async () => {
     const empty = body(await createApi({ store: await seeded(), level: LEVEL1, levelName: 'Level 1', counter })('/api/hall', ''));
-    expect(empty).toEqual({ entries: [], current: { levelId: 1, name: 'Level 1', deaths: 2000, record: { progress: 0.8, run: 1900 } } });
+    expect(empty).toEqual({
+      entries: [], current: { levelId: 1, name: 'Level 1', deaths: 2000, record: { progress: 0.8, run: 1900 }, encore: false },
+      next: null, comingSoon: false,
+    });
     const won = body(await createApi({ store: await seeded({ beaten: true }), level: LEVEL1, levelName: 'Level 1', counter })('/api/hall', ''));
     expect(won.entries).toHaveLength(1);
-    expect(won.entries[0]).toMatchObject({ levelId: 1, levelName: 'Level 1', deathCount: 299, run: 300 });
+    expect(won.entries[0]).toMatchObject({ levelId: 1, track: 1, encore: false, levelName: 'Level 1', deathCount: 299, run: 300 });
+    expect(won.comingSoon).toBe(true); // level 1 is the only level here: a new one is coming
     expect(won.entries[0].clipId).toMatch(/^demo/);
   });
 

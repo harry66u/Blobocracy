@@ -262,6 +262,7 @@ export async function startEdge(o: EdgeOptions) {
   app.get('/api/counter', (res) => {
     json(res, '200 OK', {
       deaths: welcome?.deaths ?? null, run: welcome?.run ?? null, record: welcome?.record ?? null,
+      levelId: welcome?.levelId ?? null, encore: welcome?.encore ?? false,
       online: lastOnline, packed: isPacked(), simUp: link.up,
     }, 'public, max-age=10');
   });

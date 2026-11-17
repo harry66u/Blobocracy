@@ -9,13 +9,21 @@
 //                 is its age in preview seconds)  &cause=press|spikes|ceiling spikes|pit|saw|chomp
 //               &slow=<time scale, e.g. 0.1 for slow motion>  &reduced=1 (reduced motion)  &settings=1 (open the panel)
 //               &dead=1 (with &moment=death: the blob lies at x/y as killed by &cause)
-import { makeEntity, type Entity } from '@blobocracy/shared';
+//               &level=real1|real2 (a real level's geometry; the default x is just before its goal)
+//               &moment=win (the blob touches the crown: slow motion, crown, fireworks, the card; &age to scrub)
+//               &moment=levelup (the beaten level flies off and the next slides in; start from &level=real1)
+//               &encore=1 (HUD: the encore badge and level label)
+import { CELEBRATE_S, makeEntity, type Entity } from '@blobocracy/shared';
 import './fonts.css';
 import { InputState, isGameKey } from './input.ts';
 import { type Layout } from './layout.ts';
 import { CameraRig } from './camera.ts';
 import { Director } from './director.ts';
-import { DEATH_SHAKE, DEATH_TOTAL_S, swoopDuration } from './moments.ts';
+import { DEATH_SHAKE, DEATH_TOTAL_S, levelUpFrame, swoopDuration, winFx } from './moments.ts';
+import { hudLevelLabel, levelView } from './levels.ts';
+import { LevelUpView } from './render/levelup.ts';
+import { resetRenderer, winCardShareSlot } from './render/frame.ts';
+import { mountShareButton } from './share.ts';
 import { mountHudControls } from './settings.ts';
 import { mountTouchControls } from './render/touch.ts';
 import { renderFrame, TILE_CEIL_SPIKE, TILE_CONVEYOR_L, TILE_CONVEYOR_R, TILE_CRUMBLE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE, TILE_SPRING, type Scene, type SceneCrumble, type SceneDot, type SceneLevel, type Sky } from './render/scene.ts';
@@ -26,7 +34,8 @@ import { createCanvasView, loadFonts } from './view.ts';
 // ---- test levels ----------------------------------------------------------------
 const P = new URLSearchParams(location.search);
 const MECH = P.get('level') === 'mech';
-const W = MECH ? 176 : 216, H = 18;
+const REAL = levelView(Number(P.get('level')?.match(/^real(\d+)$/)?.[1] ?? NaN));
+const W = REAL ? REAL.level.width : MECH ? 176 : 216, H = 18;
 const grid = new Uint8Array(W * H);
 const set = (x: number, y: number, t: number) => { if (x >= 0 && x < W && y >= 0 && y < H) grid[y * W + x] = t; };
 const fill = (x0: number, x1: number, y0: number, y1: number, t: number) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, t); };
@@ -34,7 +43,7 @@ const fill = (x0: number, x1: number, y0: number, y1: number, t: number) => { fo
 fill(0, W - 1, 13, 17, TILE_SOLID);
 const entities: Entity[] = [];
 const ent = (spec: Parameters<typeof makeEntity>[0], tx: number, ty: number) => entities.push(makeEntity(spec, entities.length, tx, ty));
-if (MECH) buildMechLevel(); else buildBasicLevel();
+if (REAL) { /* the real level's own geometry */ } else if (MECH) buildMechLevel(); else buildBasicLevel();
 
 function buildBasicLevel(): void {
 // zone 1 (blue): spikes, a gap bridged by a one-way, a step up with a lone spike
@@ -113,7 +122,7 @@ function buildMechLevel(): void {
 const ZONE_NAMES = MECH ? ['The Grinder', 'Sundown Steps', 'Purple Panic', 'The Last Inch'] : ['The Meadow', 'Pointy Hill', 'The Grinder', 'Up and Over', 'Night Shift', 'Last Stretch'];
 const ZONE_SKIES: Sky[] = MECH ? ['sunset', 'sunset', 'purple', 'purple'] : ['blue', 'blue', 'sunset', 'sunset', 'purple', 'purple'];
 const ZW = MECH ? 44 : 36;
-const LEVEL: SceneLevel = {
+const LEVEL: SceneLevel = REAL ? REAL.sceneLevel : {
   width: W,
   height: H,
   tileAt: (x, y) => (x < 0 || x >= W || y < 0 || y >= H ? 0 : grid[y * W + x]!),
@@ -129,8 +138,10 @@ const nDots = Math.min(128, Number(P.get('dots') ?? 120));
 const freeze = P.get('freeze') === '1';
 const still = P.get('still') === '1';
 const forcedStrain = P.get('strain');
-const startX = P.has('x') ? Number(P.get('x')) : MECH ? 3 : forcedSky === 'sunset' ? 73 : forcedSky === 'purple' ? 145 : 3;
+const goalX = REAL ? REAL.level.goalX : W - 8;
+const startX = P.has('x') ? Number(P.get('x')) : REAL ? goalX - 0.4 : MECH ? 3 : forcedSky === 'sunset' ? 73 : forcedSky === 'purple' ? 145 : 3;
 const startY = (P.has('y') ? Number(P.get('y')) : 13) - 0.6;
+const encoreMode = P.get('encore') === '1';
 const preSim = Number(P.get('at') ?? (deathMode || pausedMode ? 0 : 1.2));
 const rtOffset = Number(P.get('rt') ?? 0);
 const chompBehind = P.has('chomp') ? Number(P.get('chomp')) : null;
@@ -139,10 +150,12 @@ const moment = P.get('moment');
 const cause = P.get('cause') ?? 'spikes';
 const timeScale = Number(P.get('slow') ?? 1);
 let reduced = P.get('reduced') === '1';
+const WIN_EVENT = { t: 'win' as const, levelId: REAL?.level.id ?? 1, run: 4812, deaths: 4811, durationS: 494.2, peakPlayers: 12408, clipId: 'Zx9_-a' };
+const winMode = moment === 'win' || moment === 'levelup';
 let muted = false;
 
 // ---- fake blob physics (just enough to look like a real run) -----------------------
-const blob: { x: number; y: number; vx: number; vy: number; grounded: boolean; facing: 1 | -1; pull: number; strain: number; dead: boolean; deathCause?: string | null } = { x: startX, y: startY, vx: 0, vy: 0, grounded: true, facing: 1, pull: 0, strain: 0, dead: false };
+const blob: { x: number; y: number; vx: number; vy: number; grounded: boolean; facing: 1 | -1; pull: number; strain: number; dead: boolean; deathCause?: string | null; joy?: boolean; crown?: number } = { x: startX, y: startY, vx: 0, vy: 0, grounded: true, facing: 1, pull: 0, strain: 0, dead: false };
 const startX0 = MECH ? 3 : 3;
 const crumbles: SceneCrumble[] = [];
 let runTime = rtOffset;
@@ -263,6 +276,8 @@ const scene: Scene = {
 const chomp = entities.find((e) => e.kind === 'chomp');
 
 let simT = 0;
+/** Seconds into the win celebration (moment=win), or null. */
+let winHop: number | null = null;
 /** The blob lies dead where it is (moment=death, until the swoop). */
 let momentDead = false;
 // death preview: lie on the first floor-spike run of the zone
@@ -278,7 +293,16 @@ function simulate(dt: number): void {
   blob.pull = (R - L) / Math.max(1, dots.length);
   blob.strain = Math.min(1, (2 * Math.min(L, R)) / Math.max(1, L + R));
   if (forcedStrain !== null) blob.strain = Number(forcedStrain);
-  if (!deathMode && !pausedMode && !still && !momentDead) {
+  if (winHop !== null) {
+    // victory hops on the crown, like the server's celebration
+    blob.vx = 0;
+    const ph = winHop - 0.9;
+    const k = ph < 0 ? -1 : (ph % 0.95) / 0.62;
+    const h = k >= 0 && k < 1 ? 4 * k * (1 - k) * 1.35 : 0;
+    blob.y = startY - h;
+    blob.vy = k >= 0 && k < 1 ? (k < 0.5 ? -9 : 9) : 0;
+    blob.grounded = h <= 0.001;
+  } else if (!deathMode && !pausedMode && !still && !momentDead) {
     const bits = input.bits;
     const pull = bits & 1 ? -1 : bits & 2 ? 1 : 1;
     stepBlob(dt, pull, shouldJump() || (bits & 4) !== 0);
@@ -296,16 +320,16 @@ function simulate(dt: number): void {
       if (LEVEL.tileAt(tx, fy) === TILE_CRUMBLE) crumbles.push({ tx, ty: fy, at: runTime - k * 0.24 });
     }
   }
-  const zone = LEVEL.zones.find((z) => blob.x >= z.startX && blob.x < z.endX) ?? LEVEL.zones[0]!;
-  scene.zoneSky = zone.sky;
-  scene.hud.progress = blob.x / W;
+  const zone = scene.level.zones.find((z) => blob.x >= z.startX && blob.x < z.endX) ?? scene.level.zones[0]!;
+  scene.zoneSky = forcedSky ?? zone.sky;
+  scene.hud.progress = REAL ? Math.min(1, Math.max(0, (blob.x - REAL.level.spawn.x) / (REAL.level.goalX - REAL.level.spawn.x))) : blob.x / W;
   if (deathMode) {
     blob.x = deathX; blob.y = 12.1 - HH; blob.dead = true; blob.grounded = true; blob.vx = 0;
     scene.hud.deaths = 4812;
     scene.hud.deathsJustTicked = true;
     scene.hud.progress = 0.78;
     scene.deathCard = { run: 4812, progress: 0.78, line: 'then the Spikes popped it.', nearRecord: true, countdown: 3 };
-  } else {
+  } else if (!winMode) {
     const k = Math.floor(simT / 7);
     scene.hud.deaths = 4811 + k;
     scene.hud.deathsJustTicked = k > 0 && simT % 7 < 1.6;
@@ -335,6 +359,11 @@ async function main(): Promise<void> {
   const director = new Director(() => reduced);
   const W0 = { deaths: 4811, record: { progress: 0.83, run: 3940 }, run: 4812 };
   director.welcome(W0);
+  const levelUp = new LevelUpView();
+  const share = mountShareButton(document.body);
+  /** The level shown after the level-up (moment=levelup). */
+  let upTo: ReturnType<typeof levelView> = null;
+  let levelUpDone = false;
   const controls = mountHudControls(document.body, {
     layout: () => view.layout,
     muted: () => muted,
@@ -364,6 +393,10 @@ async function main(): Promise<void> {
     } else if (moment === 'zone') {
       const z = LEVEL.zones.find((zz) => blob.x >= zz.startX && blob.x < zz.endX) ?? LEVEL.zones[0]!;
       director.onZone(z.index, z.name, clock);
+    } else if (moment === 'win' || moment === 'levelup') {
+      winHop = 0;
+      director.onWin(WIN_EVENT, clock);
+      if (moment === 'levelup') director.onWin(WIN_EVENT, clock - (CELEBRATE_S - 0.4)); // jump to the end of the party
     } else if (moment === 'record') {
       // a record just behind the blob, so this run passes it right away
       director.welcome({ ...W0, record: { progress: progressOfX(blob.x - 1.2), run: 3940 } });
@@ -378,6 +411,20 @@ async function main(): Promise<void> {
     if (moment && momentT0 === null && (stats.__frames ?? 0) > 3) startMoment();
     const age = momentT0 === null ? null : clock - momentT0;
     stats.__momentAge = age ?? -1;
+    if (winHop !== null) winHop += dt;
+    if (moment === 'levelup' && age !== null && age > 0.4 && !upTo && !levelUpDone) {
+      // the celebration ends: snapshot this level, move on to the next one
+      const cur = REAL ?? levelView(1)!;
+      upTo = levelView(cur.next?.levelId ?? cur.level.id) ?? cur;
+      levelUp.capture(canvas, `Level ${cur.level.id}: ${cur.name}`);
+      director.onLevel({ levelId: upTo.level.id, name: upTo.name, encore: !cur.next }, clock);
+      director.welcome({ deaths: 0, record: null, run: 1 });
+      resetRenderer();
+      scene.level = upTo.sceneLevel;
+      winHop = null;
+      blob.x = upTo.level.spawn.x; blob.y = upTo.level.spawn.y; blob.vx = 0; blob.joy = false; blob.crown = 0;
+      rig.snap();
+    }
     if (moment === 'swoop' && age !== null && age > DEATH_TOTAL_S && !swooped) {
       // the reset: everyone back to the start, camera flies there
       swooped = true;
@@ -393,10 +440,18 @@ async function main(): Promise<void> {
     const sh = rig.shakeOffset();
     cam = { x: cam.x + sh.x, y: cam.y + sh.y };
     const viewW = L.w / L.tile;
-    cam.x = Math.max(-1, Math.min(W + 1 - viewW, cam.x));
+    cam.x = Math.max(-1, Math.min(scene.level.width + 1 - viewW, cam.x));
     if (moment) {
-      const d = director.frame(clock, swooped ? 4813 : 4812, progressOfX(blob.x), !blob.dead);
+      const d = director.frame(clock, upTo ? 1 : swooped ? 4813 : 4812, progressOfX(blob.x), !blob.dead && winHop === null);
       blob.deathCause = blob.dead ? cause : null;
+      if (d.win) {
+        const wf = winFx(d.win.age, reduced);
+        blob.joy = true;
+        blob.crown = wf.crown;
+        const v = REAL ?? levelView(1)!;
+        scene.win = { ...d.win, name: v.name, next: v.next, encore: encoreMode, clip: true };
+      } else scene.win = null;
+      scene.hud.cascade = d.cascade;
       scene.hud.deaths = d.deaths;
       scene.hud.deathsJustTicked = d.deathsJustTicked;
       scene.hud.record = d.record;
@@ -412,13 +467,29 @@ async function main(): Promise<void> {
         reduced, freeze: d.freeze, flash: d.flash, vignette: d.vignette, fade: rig.swoopFade, banner: d.banner,
         recordFlag: d.flagProgress === null ? null : { x: d.flagProgress * W, label: `${Math.round(d.flagProgress * 100)}%` },
         skyRate: rig.swoopK !== null ? (reduced ? 50 : 3.5) : reduced ? 0.6 : 1,
+        timeScale: d.timeScale,
       };
+      if (d.levelUp && levelUp.ready) {
+        const shown = upTo ?? REAL ?? levelView(1)!;
+        scene.hud.levelLabel = hudLevelLabel(shown.level.id, false);
+        const lf = levelUpFrame(d.levelUp.age, reduced);
+        levelUp.draw(view.ctx, L, lf, d.levelUp, scene.level.zones[0]!.sky, reduced, clock, (g) => renderFrame(g, L, cam, scene, clock));
+        if (lf.done) { levelUp.end(); levelUpDone = true; }
+        scene.hud.muted = muted;
+        stats.__frames = (stats.__frames ?? 0) + 1;
+        requestAnimationFrame(frame);
+        return;
+      }
     } else {
       scene.fx = { reduced, freeze: false, flash: 0, vignette: 0, fade: 0, banner: null, recordFlag: { x: 0.83 * W, label: '83%' }, skyRate: 1 };
     }
     scene.hud.muted = muted;
+    const shownLevel = upTo ?? REAL;
+    scene.hud.levelLabel = shownLevel ? hudLevelLabel(shownLevel.level.id, encoreMode) : encoreMode ? 'Level 2' : null;
+    scene.hud.encore = encoreMode;
     const t0 = performance.now();
     renderFrame(view.ctx, L, cam, scene, clock);
+    share.place(winCardShareSlot(), scene.win ? { t: 'clip', id: 'Zx9_-a', kind: 'win', run: 4812 } : null);
     const ms = performance.now() - t0;
     stats.__frames = (stats.__frames ?? 0) + 1;
     stats.__renderMs = (stats.__renderMs ?? 0) + ms;

@@ -1,7 +1,9 @@
 // Choreographs the big moments from server events: the death beat (hit-stop, flash,
-// delayed counter flip, death card with a countdown), the zone banner, and passing the
-// record mid-run. Holds no rendering state; it turns events + time into Scene fields.
-import { BANNER_S, DEATH_CARD_AT, DEATH_COUNTER_AT, DEATH_TOTAL_S, deathFx, deathLine } from './moments.ts';
+// delayed counter flip, death card with a countdown), the zone banner, passing the
+// record mid-run, the win (spec §6.7: slow motion, the crown, fireworks, the card) and
+// the level-up that follows. Holds no rendering state; it turns events + time into Scene fields.
+import type { WinEvent } from '@blobocracy/shared';
+import { BANNER_S, DEATH_CARD_AT, DEATH_COUNTER_AT, DEATH_TOTAL_S, LEVELUP_S, deathFx, deathLine, winFx, winLines } from './moments.ts';
 import type { SceneBanner, SceneDeathCard } from './render/scene.ts';
 
 export interface DeathEvent { run: number; cause: string; progress: number; deaths: number; nearRecord: boolean }
@@ -12,7 +14,20 @@ const MIN_RECORD = 0.02;
 /** The "+1"/lit counter stays this long after it flips. */
 const LIT_S = DEATH_TOTAL_S - DEATH_COUNTER_AT + 0.3;
 
+/** The win being celebrated: the server's numbers and seconds since the blob touched the goal. */
+export interface WinMoment { age: number; levelId: number; run: number; deaths: number; durationS: number; peakPlayers: number; clipId: string | null }
+/** The level-up after a celebration: seconds since the 'level' event, and where everyone is going. */
+export interface LevelUpMoment { age: number; levelId: number; name: string; encore: boolean }
+
 export interface DirectorFrame {
+  /** The win being celebrated, or null. */
+  win: WinMoment | null;
+  /** The level-up transition, or null. */
+  levelUp: LevelUpMoment | null;
+  /** World animation speed (slow motion at the win), 1 normally. */
+  timeScale: number;
+  /** Seconds into a celebratory wave across the counter cards, or null. */
+  cascade: number | null;
   freeze: boolean;
   flash: number;
   vignette: number;
@@ -56,10 +71,14 @@ export class Director {
   private deathEndAt = -Infinity;
   private banner: (SceneBanner & { at: number }) | null = null;
   private bannerId = 0;
+  /** `at` is null until the first frame anchors a celebration joined `age0` seconds in. */
+  private win: { e: WinEvent; at: number | null; age0: number } | null = null;
+  private levelUp: { levelId: number; name: string; encore: boolean; at: number } | null = null;
 
   constructor(private readonly reduced: () => boolean, private readonly hooks: DirectorHooks = {}) {}
 
-  welcome(e: { deaths: number; record: Record; run: number }): void {
+  /** A welcome resets the counters; during a celebration it carries the win (picked up at its age). A level-up in progress stays. */
+  welcome(e: { deaths: number; record: Record; run: number; celebrating?: { win: WinEvent; ageS: number } }): void {
     this.deaths = this.shownDeaths = e.deaths;
     this.record = this.chasing = e.record;
     this.run = e.run;
@@ -68,6 +87,26 @@ export class Director {
     this.primed = false; // the first frame tells us whether this run is already past it
     this.death = null;
     this.banner = null;
+    if (e.celebrating) {
+      if (!this.win || this.win.e.run !== e.celebrating.win.run) this.win = { e: { ...e.celebrating.win }, at: null, age0: e.celebrating.ageS };
+    } else this.win = null;
+  }
+
+  /** The blob touched the goal. */
+  onWin(e: WinEvent, now: number): void {
+    this.win = { e: { ...e }, at: now, age0: 0 };
+    this.record = { progress: 1, run: e.run };
+    this.death = null;
+    this.banner = null;
+    const w = winLines(e, { name: '', next: null, encore: false });
+    this.hooks.announce?.(`${w.title} ${w.line}. Run ${fmt(e.run)} made it all the way.`);
+  }
+
+  /** The celebration is over: everyone moves to the next level (or the encore). */
+  onLevel(e: { t?: 'level'; levelId: number; version?: number; name: string; encore: boolean }, now: number): void {
+    this.win = null;
+    this.levelUp = { levelId: e.levelId, name: e.name, encore: e.encore, at: now };
+    this.hooks.announce?.(e.encore ? `Encore! ${e.name} again, with a fresh death counter.` : `Level ${e.levelId} unlocked: ${e.name}`);
   }
 
   onDeath(e: DeathEvent, now: number): void {
@@ -103,6 +142,19 @@ export class Director {
    */
   frame(now: number, run: number, progress: number, running: boolean): DirectorFrame {
     const reduced = this.reduced();
+    let win: WinMoment | null = null;
+    if (this.win) {
+      if (this.win.at === null) this.win.at = now - this.win.age0;
+      const e = this.win.e;
+      win = { age: now - this.win.at, levelId: e.levelId, run: e.run, deaths: e.deaths, durationS: e.durationS, peakPlayers: e.peakPlayers, clipId: e.clipId };
+    }
+    let levelUp: LevelUpMoment | null = null;
+    if (this.levelUp) {
+      const age = now - this.levelUp.at;
+      if (age > LEVELUP_S) this.levelUp = null;
+      else levelUp = { age, levelId: this.levelUp.levelId, name: this.levelUp.name, encore: this.levelUp.encore };
+    }
+    const wf = win ? winFx(win.age, reduced) : null;
     if (run !== this.run && running) {
       // a reset we never heard about (reconnect): start chasing afresh
       this.onReset(run, now);
@@ -147,6 +199,10 @@ export class Director {
     const beating = this.beatenAt !== null && this.chasing !== null && !d;
     const record: Record = beating ? { progress: Math.max(this.best, this.chasing!.progress), run: this.run } : this.record;
     return {
+      win,
+      levelUp,
+      timeScale: wf ? wf.timeScale : 1,
+      cascade: wf ? wf.cascade : null,
       freeze: fx.freeze,
       flash: fx.flash,
       vignette,

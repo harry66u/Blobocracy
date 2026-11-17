@@ -29,6 +29,7 @@ function tokenOk(want: string, header: string): boolean {
  *   POST /admin/unban {cidr}
  *   POST /admin/budget {monthlyUsd} raise (or lower) the monthly budget live
  *   POST /admin/reset-flags        clear every shadow-ban flag
+ *   POST /admin/debug/win          dev only: put the blob just before the goal (refused when NODE_ENV=production)
  */
 export function createAdmin(ctx: {
   token: string | undefined;
@@ -39,6 +40,10 @@ export function createAdmin(ctx: {
   bans?: Set<string>;
   /** Called after the ban list changes (persisted with the live snapshot). */
   onBans?: () => void;
+  /** Production refuses the debug actions. */
+  production?: boolean;
+  /** Puts the blob just before the current level's goal; false when it can't right now (dying, celebrating). */
+  debugWin?: () => boolean;
 }) {
   const bans = ctx.bans ?? new Set<string>();
   const pushBans = () => ctx.control({ c: 'bans', cidrs: [...bans] });
@@ -69,6 +74,12 @@ export function createAdmin(ctx: {
         ctx.governor.setBudget(usd);
         ctx.onBudget();
         return { status: 200, body: { budget: ctx.governor.snapshot() } };
+      }
+      case 'POST /admin/debug/win': {
+        if (ctx.production || !ctx.debugWin) return { status: 403, body: { error: 'debug actions are off in production' } };
+        return ctx.debugWin()
+          ? { status: 200, body: { ok: true, hint: 'the blob is just before the goal: hold right to win' } }
+          : { status: 409, body: { error: 'not now: the blob is dying or already celebrating' } };
       }
       case 'POST /admin/reset-flags':
         ctx.control({ c: 'resetFlags' });

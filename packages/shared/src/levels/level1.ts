@@ -2272,4 +2272,4 @@ const theLastInch: ZoneDef = {
   ],
 };
 
-export const LEVEL1 = parseLevel(1, 1, [welcomeMat, pointyMeadow, theGrinder, sundownSteps, purplePanic, theLastInch]);
+export const LEVEL1 = parseLevel(1, 1, [welcomeMat, pointyMeadow, theGrinder, sundownSteps, purplePanic, theLastInch], 'Crown Mountain');
