@@ -2,22 +2,20 @@
 // Usage: npx tsx tools/audio-render.ts [outDir]
 // Writes one WAV per clip (listen to them!) and fails if anything is silent, clips,
 // or the death hit is not followed by silence.
-import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 // Playwright is preinstalled globally; ESM imports don't search NODE_PATH, so require it.
 const { chromium } = createRequire(import.meta.url)('playwright') as typeof import('playwright');
+import { createServer } from 'vite';
 import type { ClipResult } from '../packages/client/src/audio-test';
 
 const out = process.argv[2] ?? 'tools/out/audio';
 mkdirSync(out, { recursive: true });
-const PORT = 5181;
 
-const vite = spawn('npx', ['vite', 'packages/client', '--port', String(PORT), '--strictPort'], { stdio: 'pipe' });
-await new Promise<void>((res, rej) => {
-  vite.stdout.on('data', (d) => String(d).includes('Local') && res());
-  vite.on('exit', (code) => rej(new Error(`vite exited (${code})`)));
-});
+// Vite in-process (any free port), so it always shuts down with this script.
+const vite = await createServer({ root: 'packages/client', logLevel: 'warn', server: { port: 5181, strictPort: false } });
+await vite.listen();
+const base = vite.resolvedUrls?.local[0] ?? 'http://localhost:5181/';
 
 const browser = await chromium.launch();
 let failures: string[] = [];
@@ -26,7 +24,7 @@ try {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(`http://localhost:${PORT}/audio-test.html`);
+  await page.goto(new URL('audio-test.html', base).href);
   await page.waitForFunction(() => (window as unknown as { audioTestReady?: boolean }).audioTestReady === true);
   const results = await page.evaluate(() => (window as unknown as { renderAll: () => Promise<ClipResult[]> }).renderAll());
   if (errors.length) failures.push(`page errors: ${errors.join('; ')}`);
@@ -60,7 +58,7 @@ try {
   console.log(`\nWAV files in ${out}/`);
 } finally {
   await browser.close();
-  vite.kill();
+  await vite.close();
 }
 if (failures.length) {
   console.log('\nFAIL:\n  ' + failures.join('\n  '));

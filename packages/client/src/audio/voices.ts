@@ -86,20 +86,22 @@ export type MusicVoice = (k: Kit, out: AudioNode, t: number, freq: number, dur: 
 export const bassVoice: MusicVoice = (k, out, t, f, dur, vel) => {
   const end = t + dur + 0.35;
   const g = gain(k);
-  const peak = 0.4 * vel;
+  const peak = 0.28 * vel;
   g.gain.setValueAtTime(0, t);
   g.gain.linearRampToValueAtTime(peak, t + 0.012);
   g.gain.setTargetAtTime(peak * 0.55, t + 0.012, 0.12);
   g.gain.setTargetAtTime(0, t + dur, 0.06);
   osc(k, 'sine', f, t, end).connect(g);
-  const tri = gain(k, 0.35);
-  osc(k, 'triangle', f, t, end).connect(tri).connect(g);
+  // a little low-passed saw so the bass line still reads on phone and laptop speakers
+  const edge = gain(k, 0.32);
+  const saw = osc(k, 'sawtooth', f, t, end);
+  saw.connect(filter(k, 'lowpass', 520, 0.6)).connect(edge).connect(g);
   g.connect(out);
 };
 
 export const pluckVoice: MusicVoice = (k, out, t, f, dur, vel) => {
   const g = gain(k);
-  const end = perc(g.gain, t, 0.004, 0.2 * vel, 0.22 + Math.min(dur, 0.35));
+  const end = perc(g.gain, t, 0.004, 0.3 * vel, 0.22 + Math.min(dur, 0.35));
   osc(k, 'triangle', f, t, end + 0.02).connect(g);
   const h = gain(k, 0.16);
   osc(k, 'sine', f * 2, t, end + 0.02).connect(h).connect(g);
@@ -172,7 +174,7 @@ export function jumpSound(k: Kit, out: AudioNode, t: number, strength: number): 
   const top = base * (1.5 + 0.7 * s);
   const rise = 0.07 + 0.05 * s;
   const g = gain(k);
-  const end = perc(g.gain, t, 0.006, 0.24 + 0.12 * s, 0.13 + 0.1 * s);
+  const end = perc(g.gain, t, 0.006, 0.17 + 0.09 * s, 0.13 + 0.1 * s);
   const lp = filter(k, 'lowpass', 2600);
   const o = osc(k, 'sine', base * 0.9, t, end + 0.02);
   o.frequency.exponentialRampToValueAtTime(top, t + rise);
@@ -242,9 +244,14 @@ export function pressSound(k: Kit, out: AudioNode, t: number, distanceTiles: num
   const o = osc(k, 'sine', 78, t, end + 0.02);
   o.frequency.exponentialRampToValueAtTime(36, t + 0.25);
   o.connect(g).connect(out);
+  const mid = gain(k);
+  const mend = perc(mid.gain, t, 0.003, 0.4 * near, 0.16);
+  const m = osc(k, 'triangle', 210, t, mend + 0.02);
+  m.frequency.exponentialRampToValueAtTime(95, t + 0.12);
+  m.connect(filter(k, 'lowpass', 300 + 900 * near)).connect(mid).connect(out);
   const ng = gain(k);
-  const nend = perc(ng.gain, t, 0.002, 0.35 * near, 0.11);
-  noise(k, t, nend - t + 0.01).connect(filter(k, 'lowpass', 250 + 1100 * near, 0.9)).connect(ng).connect(out);
+  const nend = perc(ng.gain, t, 0.002, 0.55 * near, 0.13);
+  noise(k, t, nend - t + 0.01).connect(filter(k, 'lowpass', 350 + 1400 * near, 0.9)).connect(ng).connect(out);
 }
 
 /** The one heavy hit on death: a woody cartoon "bonk" over a big soft-clipped sub thud. */
@@ -257,12 +264,19 @@ export function deathSound(k: Kit, out: AudioNode, t: number): void {
   so.frequency.exponentialRampToValueAtTime(34, t + 0.6);
   const shaper = k.ctx.createWaveShaper();
   shaper.curve = k.softClip;
-  const post = gain(k, 0.62);
-  so.connect(sub).connect(shaper).connect(filter(k, 'lowpass', 420, 0.6)).connect(post).connect(out);
+  const post = gain(k, 0.42);
+  so.connect(sub).connect(shaper).connect(filter(k, 'lowpass', 900, 0.6)).connect(post).connect(out);
+
+  // body: a round mid thump that carries the weight on small speakers
+  const body = gain(k);
+  const bodyEnd = perc(body.gain, t, 0.002, 0.8, 0.42);
+  const bo = osc(k, 'triangle', 240, t, bodyEnd + 0.02);
+  bo.frequency.exponentialRampToValueAtTime(90, t + 0.22);
+  bo.connect(filter(k, 'lowpass', 1100, 0.7)).connect(body).connect(out);
 
   // the bonk: two pitched partials dropping fast
   const bonk = gain(k);
-  const bonkEnd = perc(bonk.gain, t, 0.002, 0.42, 0.3);
+  const bonkEnd = perc(bonk.gain, t, 0.002, 0.85, 0.3);
   const b1 = osc(k, 'sine', 420, t, bonkEnd + 0.02);
   b1.frequency.exponentialRampToValueAtTime(170, t + 0.16);
   b1.connect(bonk);
@@ -274,8 +288,8 @@ export function deathSound(k: Kit, out: AudioNode, t: number): void {
 
   // impact: a short muffled noise slap
   const ng = gain(k);
-  const nend = perc(ng.gain, t, 0.001, 0.55, 0.08);
-  noise(k, t, nend - t + 0.01).connect(filter(k, 'lowpass', 1300, 0.8)).connect(ng).connect(out);
+  const nend = perc(ng.gain, t, 0.001, 0.7, 0.08);
+  noise(k, t, nend - t + 0.01).connect(filter(k, 'lowpass', 1700, 0.8)).connect(ng).connect(out);
 }
 
 function clap(k: Kit, out: AudioNode, t: number, level: number, pan: number): void {

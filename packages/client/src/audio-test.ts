@@ -39,7 +39,7 @@ const CLIPS: Clip[] = [
     windows: { hard: [0.1, 0.35], soft: [0.6, 0.85] } },
   { name: 'sfx-misc', seconds: 4.2, music: false,
     actions: [[0.1, (a) => a.spring()], [0.8, (a) => a.crumble()], [1.5, (a) => a.pressSlam(1)], [2.2, (a) => a.pressSlam(12)], ...sawRamp],
-    windows: { spring: [0.1, 0.6], crumble: [0.8, 1.2], pressNear: [1.5, 1.9], pressFar: [2.2, 2.6], sawHalf: [3.2, 3.4], sawFull: [3.6, 3.8], sawStopped: [4.05, 4.2] } },
+    windows: { spring: [0.1, 0.6], crumble: [0.8, 1.2], pressNear: [1.5, 1.9], pressFar: [2.2, 2.6], sawHalf: [3.2, 3.4], sawFull: [3.6, 3.8], sawStopped: [4.08, 4.2] } },
   { name: 'death', seconds: 4.5, music: true, actions: [[2.0, (a) => a.death()], [2.2, (a) => a.jump(1)]],
     windows: { music: [1.6, 2.0], hit: [2.0, 2.5], tail: [3.4, 4.5] } },
   { name: 'cheer-zone', seconds: 2.4, music: false, actions: [[0.1, (a) => a.cheer('zone')]], windows: { body: [0.2, 1.4] } },

@@ -3,6 +3,7 @@ import { generatePattern, LAYERS, MAJOR, mulberry32, stepSeconds, zoneStyle, ZON
 import { RateLimiter } from '../src/audio/ratelimit';
 import { loadMuted, MUTED_KEY, saveMuted, type StorageLike } from '../src/audio/prefs';
 import { glideBpm, layerTargets, planCrossfade, rampValue } from '../src/audio/crossfade';
+import { createGameAudio } from '../src/audio';
 
 describe('music patterns', () => {
   test('mulberry32 is deterministic and in [0, 1)', () => {
@@ -171,5 +172,35 @@ describe('zone crossfade', () => {
     expect(seen[19]).toBeCloseTo(120);
     expect(Math.max(...seen)).toBe(120);
     expect(glideBpm(130, 120, 130, 1, 2)).toBeCloseTo(125); // also glides down
+  });
+});
+
+describe('createGameAudio without Web Audio', () => {
+  test('every call is a safe no-op, and mute is still remembered', () => {
+    expect((globalThis as { AudioContext?: unknown }).AudioContext).toBeUndefined();
+    const data = new Map<string, string>();
+    const storage: StorageLike = { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v) };
+    const audio = createGameAudio({ storage });
+    expect(audio.muted).toBe(false);
+    expect(() => {
+      audio.unlock();
+      audio.unlock();
+      audio.setZone(3);
+      audio.setCrowd(120, 0.5);
+      audio.jump(1);
+      audio.land(0.5);
+      audio.spring();
+      audio.crumble();
+      audio.pressSlam(4);
+      audio.sawNear(0.7);
+      audio.cheer('record');
+      audio.death();
+      audio.resetToStart();
+      audio.tick();
+      audio.setMuted(true);
+    }).not.toThrow();
+    expect(audio.muted).toBe(true);
+    expect(data.get('blob.muted')).toBe('1');
+    expect(createGameAudio({ storage }).muted).toBe(true);
   });
 });

@@ -49,6 +49,7 @@ export interface GameAudioOptions {
 }
 
 const VOLUME = 0.9;
+const MUSIC_LEVEL = 0.22; // music sits well under the SFX
 const FADE = 2; // zone crossfade, seconds
 const LOOKAHEAD = 0.15; // seconds of music scheduled ahead
 const PUMP_MS = 25;
@@ -138,7 +139,7 @@ function buildGraph(ctx: BaseAudioContext, rng: () => number, muted: boolean): G
   musicCut.connect(musicTone);
   const musicEnergy = g(zoneStyle(0).energy);
   musicEnergy.connect(musicCut);
-  const musicMix = g(1);
+  const musicMix = g(MUSIC_LEVEL);
   musicMix.connect(musicEnergy);
 
   // A soft dotted-eighth echo for the melodic layers.
@@ -340,7 +341,7 @@ export function createGameAudio(opts: GameAudioOptions = {}): GameAudio {
     if (!gr) return;
     const t0 = gr.ctx.currentTime;
     // The saw buzz fades out by itself when the game stops reporting it.
-    if (sawLevel > 0 && t0 - sawLast > 0.2) setSaw(0);
+    if (sawLevel > 0 && t0 - sawLast > 0.12) setSaw(0);
     if (!musicOn) return;
     if (nextTime < t0 - 0.3) nextTime = t0 + 0.03; // fell behind (stalled tab): skip ahead, don't burst
     const total = patterns[0]!.bars * patterns[0]!.stepsPerBar;
@@ -362,7 +363,7 @@ export function createGameAudio(opts: GameAudioOptions = {}): GameAudio {
     const t = now();
     const fullness = crowd.online <= 1 ? 0 : Math.min(1, Math.log10(crowd.online) / Math.log10(500));
     const s = Math.max(0, Math.min(1, crowd.strain));
-    const level = 0.035 * fullness;
+    const level = 0.08 * fullness;
     gr.bed.gain.setTargetAtTime(level, t, 0.4);
     gr.strainToBed.gain.setTargetAtTime(level * 0.6 * s, t, 0.15);
     gr.strainToTone.gain.setTargetAtTime(700 * s, t, 0.15);
@@ -400,7 +401,7 @@ export function createGameAudio(opts: GameAudioOptions = {}): GameAudio {
       gr.saw = { gain, oscs };
     }
     sawLevel = p;
-    gr.saw.gain.gain.setTargetAtTime(p <= 0.001 ? 0 : 0.11 * p ** 1.5, t, 0.05);
+    gr.saw.gain.gain.setTargetAtTime(p <= 0.001 ? 0 : 0.11 * p ** 1.5, t, p <= 0.001 ? 0.025 : 0.05);
     gr.saw.oscs.forEach((o, i) => o.frequency.setTargetAtTime((105 + 55 * p) * (i ? 1.013 : 1), t, 0.08));
   }
 
@@ -499,27 +500,31 @@ export function createGameAudio(opts: GameAudioOptions = {}): GameAudio {
       if (p > 0 || sawLevel > 0) setSaw(p);
     }),
 
-    death: guard((g) => {
-      if (dead) return;
-      const t = g.ctx.currentTime + 0.005;
-      if (!limiter.allow('death', t)) return;
-      dead = true;
-      if (!muted) deathSound(g.kit, g.hit, t);
-      // The music (and every other sound) stops at the hit.
-      musicOn = false;
-      pendingZone = null;
-      glideTo(g.musicCut.gain, t, 0, 0.004);
-      glideTo(g.sfx.gain, t, 0, 0.004);
-      // Safety net: other SFX come back on their own if resetToStart never arrives.
-      g.sfx.gain.setTargetAtTime(1, t + 4, 0.05);
-      sawLevel = 0;
-    }),
+    death() {
+      try {
+        const g = gr;
+        // Works while the context is suspended too (hidden tab): the state still changes, just no hit.
+        if (!g || !unlocked || dead) return;
+        const t = g.ctx.currentTime + 0.005;
+        if (!limiter.allow('death', t)) return;
+        dead = true;
+        if (!muted && live()) deathSound(g.kit, g.hit, t);
+        // The music (and every other sound) stops at the hit.
+        musicOn = false;
+        pendingZone = null;
+        glideTo(g.musicCut.gain, t, 0, 0.004);
+        glideTo(g.sfx.gain, t, 0, 0.004);
+        // Safety net: other SFX come back on their own if resetToStart never arrives.
+        g.sfx.gain.setTargetAtTime(1, t + 4, 0.05);
+        setSaw(0);
+      } catch { /* ignore */ }
+    },
 
     resetToStart() {
       try {
         targetZone = 0;
-        const g = live();
-        if (!g) { dead = false; return; }
+        const g = gr;
+        if (!g || !unlocked) { dead = false; return; }
         if (!dead && musicOn) { pendingZone = playingZone === 0 ? null : 0; return; }
         dead = false;
         limiter.reset();

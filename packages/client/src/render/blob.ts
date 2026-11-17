@@ -1,9 +1,10 @@
 // The blob: body, shade, highlight, big eyes that look toward the crowd's pull, a calm
 // face normally, effort face during a tug of war, panic face (worried brows, "o" mouth,
 // sweat, alarm lines) when a hazard or gap is close ahead, sleeping when paused, and a
-// flattened pancake with X eyes when dead. Also owns jump/landing dust and the arc trail.
-import { BLOB, BLOB_SHADE, CREAM, CREAM_HI, FONT_TEXT, INK, SWEAT } from './palette.ts';
+// comic death pose per cause (deathpose.ts). Also owns jump/landing dust and the arc trail.
+import { BLOB, BLOB_SHADE, CREAM_HI, FONT_TEXT, INK, SWEAT } from './palette.ts';
 import { dangerAhead, HALF_H, type DangerWorld } from './danger.ts';
+import { drawDeathPose, drawGulp } from './deathpose.ts';
 import type { SceneBlob, SceneLevel } from './scene.ts';
 
 export { dangerAhead, HALF_H } from './danger.ts';
@@ -136,7 +137,7 @@ export class BlobView {
 
   draw(ctx: CanvasRenderingContext2D, T: number, cx: number, feetY: number, b: SceneBlob, paused: boolean, timeS: number): void {
     if (b.dead) {
-      this.drawDead(ctx, T, cx, feetY, timeS);
+      drawDeathPose(b.deathCause, { g: ctx, T, cx, feetY, t: Math.max(0, timeS - this.deadT), timeS });
       return;
     }
     const r = T * 0.8;
@@ -349,63 +350,9 @@ export class BlobView {
     if (paused) drawZzz(ctx, T, cx + r * 0.7, feetY - bh * 2 - r * 0.1, timeS);
   }
 
-  private drawDead(ctx: CanvasRenderingContext2D, T: number, cx: number, feetY: number, timeS: number): void {
-    const t = timeS - this.deadT;
-    // squash into a pancake with a little overshoot
-    const k = t < 0 ? 1 : Math.min(1, 1 - Math.exp(-t * 18) * Math.cos(t * 26));
-    const halfW = T * (0.8 + 0.55 * k);
-    const hgt = T * (1.6 - 1.2 * k);
-    const y = feetY;
-    const x0 = cx - halfW, x1 = cx + halfW;
-    ctx.save();
-    ctx.fillStyle = BLOB;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = T * 0.09;
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x0, y);
-    ctx.bezierCurveTo(x0 - T * 0.1, y - hgt * 1.1, x0 + halfW * 0.45, y - hgt, cx, y - hgt);
-    ctx.bezierCurveTo(x1 - halfW * 0.45, y - hgt, x1 + T * 0.1, y - hgt * 1.1, x1, y);
-    ctx.closePath();
-    ctx.fill();
-    ctx.save();
-    ctx.clip();
-    ctx.fillStyle = BLOB_SHADE;
-    ctx.fillRect(x0 - T, y - hgt * 0.38, halfW * 2 + 2 * T, hgt);
-    ctx.restore();
-    ctx.stroke();
-    // splats
-    const seeds = [0.12, 0.31, 0.47, 0.63, 0.8, 0.93];
-    for (let i = 0; i < seeds.length; i++) {
-      const a = Math.PI + seeds[i]! * Math.PI;
-      const dist = T * (1.1 + ((i * 7) % 5) * 0.25) * Math.min(1, t * 6);
-      ctx.beginPath();
-      ctx.arc(cx + Math.cos(a) * dist * 1.4, y - T * 0.15 + Math.sin(a) * dist * 0.7, T * (0.06 + (i % 3) * 0.04), 0, Math.PI * 2);
-      ctx.lineWidth = T * 0.04;
-      ctx.fill();
-      ctx.stroke();
-    }
-    // X eyes
-    const ey = y - hgt * 0.5;
-    ctx.lineWidth = T * 0.07;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (const d of [-1, 1]) {
-      const xx = cx + d * T * 0.24, s = T * 0.11;
-      ctx.moveTo(xx - s, ey - s); ctx.lineTo(xx + s, ey + s);
-      ctx.moveTo(xx + s, ey - s); ctx.lineTo(xx - s, ey + s);
-    }
-    ctx.stroke();
-    // impact stars
-    if (t < 1.6) {
-      const a = Math.min(1, (1.6 - t) * 2);
-      ctx.globalAlpha = a;
-      star(ctx, cx - T * 1.6, y - T * 1.1, 0.9 * T / 50, timeS);
-      star(ctx, cx + T * 1.7, y - T * 1.5, 0.7 * T / 50, timeS + 1);
-      star(ctx, cx + T * 1.1, y - T * 2.3, 0.5 * T / 50, timeS + 2);
-      ctx.globalAlpha = 1;
-    }
-    ctx.restore();
+  /** The gulped pose, drawn over the Big Chomp (only while dead from it). */
+  drawGulp(ctx: CanvasRenderingContext2D, T: number, cx: number, feetY: number, timeS: number): void {
+    drawGulp({ g: ctx, T, cx, feetY, t: Math.max(0, timeS - this.deadT), timeS });
   }
 }
 
@@ -423,23 +370,6 @@ function drop(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, ro
   ctx.fillStyle = SWEAT;
   ctx.fill();
   ctx.lineWidth = 2.2 / s;
-  ctx.strokeStyle = INK;
-  ctx.stroke();
-  ctx.restore();
-}
-
-function star(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, t: number): void {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(Math.sin(t * 3) * 0.3);
-  ctx.scale(s, s);
-  ctx.beginPath();
-  ctx.moveTo(0, -10); ctx.lineTo(3, -3); ctx.lineTo(10, 0); ctx.lineTo(3, 3);
-  ctx.lineTo(0, 10); ctx.lineTo(-3, 3); ctx.lineTo(-10, 0); ctx.lineTo(-3, -3);
-  ctx.closePath();
-  ctx.fillStyle = CREAM;
-  ctx.fill();
-  ctx.lineWidth = 2 / s;
   ctx.strokeStyle = INK;
   ctx.stroke();
   ctx.restore();

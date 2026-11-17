@@ -2,16 +2,34 @@
 // record (top right), progress bar with zone ticks, run marker, record flag, sound and
 // settings buttons; plus the death card.
 import type { Layout } from '../layout.ts';
-import { BLOB, CREAM, FONT_DISPLAY, FONT_TEXT, HAZARD, INK, ONLINE, type SkyPalette } from './palette.ts';
+import { flipFrame, FLIP_S } from '../moments.ts';
+import { BLOB, CREAM, CREAM_HI, FONT_DISPLAY, FONT_TEXT, HAZARD, INK, ONLINE, type SkyPalette } from './palette.ts';
 import type { SceneDeathCard, SceneHud } from './scene.ts';
 
-const FLIP_S = 0.42;
+/** How long the death card takes to leave after the reset. */
+const CARD_OUT_S = 0.35;
+const RECORD_POP_S = 2.8;
 
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 
 /** UI scale relative to the mockup's 1600×900 desktop and 390×844 phone. */
 export function uiScale(L: Layout): number {
   return L.phone ? Math.min(1.35, Math.max(0.82, L.w / 390)) : Math.min(1.35, Math.max(0.62, Math.min(L.h / 900, L.w / 1600 * 1.1)));
+}
+
+export interface HudButton { kind: 'sound' | 'settings'; cx: number; cy: number; r: number }
+
+/** The sound and settings buttons at the right end of the progress bar (CSS px). */
+export function hudButtons(L: Layout): HudButton[] {
+  const s = uiScale(L);
+  const phone = L.phone;
+  const y = L.h - (phone ? 34 : 30) * s;
+  const r = (phone ? 15 : 18) * s;
+  const bx = L.w - (phone ? 30 : 40) * s;
+  return [
+    { kind: 'sound', cx: bx - (phone ? 38 : 48) * s, cy: y, r },
+    { kind: 'settings', cx: bx, cy: y, r },
+  ];
 }
 
 export class HudView {
@@ -23,9 +41,13 @@ export class HudView {
   private tickT0 = -10;
   private cardT0 = -10;
   private hadCard = false;
+  private lastCard: SceneDeathCard | null = null;
+  private cardOutT0 = -10;
+  private reduced = false;
   private readonly widths = new Map<string, number>();
 
-  update(hud: SceneHud, card: SceneDeathCard | null, timeS: number): void {
+  update(hud: SceneHud, card: SceneDeathCard | null, timeS: number, reduced = false): void {
+    this.reduced = reduced;
     if (this.shown < 0) {
       this.shown = hud.deaths;
       this.prevStr = fmt(hud.deaths);
@@ -43,6 +65,8 @@ export class HudView {
     if (hud.deathsJustTicked && !this.ticked) this.tickT0 = timeS;
     this.ticked = hud.deathsJustTicked;
     if (card && !this.hadCard) this.cardT0 = timeS;
+    if (!card && this.hadCard) this.cardOutT0 = timeS;
+    if (card) this.lastCard = card;
     this.hadCard = card !== null;
   }
 
@@ -111,7 +135,59 @@ export class HudView {
     ctx.fillStyle = pal.hudSoft;
     if (line2) ctx.fillText(line2, rx, y2);
     const rightW = Math.max(this.measure(ctx, fontBig, line1), line2 ? this.measure(ctx, fontSmall, line2) : 0);
+    const pop = hud.recordPop;
+    if (pop !== null && pop !== undefined && pop >= 0 && pop < RECORD_POP_S) this.recordSticker(ctx, rx, y2 + (phone ? 20 : 26) * s, s, pop);
     return pad + Math.max(leftW, rightW);
+  }
+
+  /** "New record!" sticker that pops under the record text when the run passes it. */
+  private recordSticker(ctx: CanvasRenderingContext2D, right: number, y: number, s: number, t: number): void {
+    const reduced = this.reduced;
+    const grow = reduced ? 1 : t < 0.32 ? 1 + 2.6 * Math.pow(t / 0.32 - 1, 3) + 1.6 * Math.pow(t / 0.32 - 1, 2) : 1 + 0.04 * Math.sin((t - 0.32) * 5) * Math.exp(-(t - 0.32) * 2);
+    const alpha = Math.min(1, reduced ? t / 0.25 : 1, (RECORD_POP_S - t) / 0.35);
+    const font = `${(16 * s).toFixed(1)}px ${FONT_DISPLAY}`;
+    const text = 'New record!';
+    const tw = this.measure(ctx, font, text);
+    const pw = tw + 22 * s, ph = 28 * s;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.translate(right - pw / 2, y);
+    ctx.rotate((-5 * Math.PI) / 180);
+    ctx.scale(Math.max(0.01, grow), Math.max(0.01, grow));
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.roundRect(-pw / 2, -ph / 2 + 3 * s, pw, ph, ph / 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.roundRect(-pw / 2, -ph / 2, pw, ph, ph / 2);
+    ctx.fillStyle = HAZARD;
+    ctx.fill();
+    ctx.lineWidth = 2.5 * s;
+    ctx.strokeStyle = INK;
+    ctx.stroke();
+    ctx.font = font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = CREAM_HI;
+    ctx.fillText(text, 0, 1 * s);
+    // sparkles
+    if (!reduced && t < 1.4) {
+      ctx.fillStyle = BLOB;
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 1.5 * s;
+      for (const [dx, dy, k] of [[-0.55, -0.9, 1], [0.6, -0.8, 0.8], [0.52, 0.85, 0.7]] as const) {
+        const a = Math.max(0, 1 - t / 1.4) * k;
+        const sz = 6 * s * a;
+        const sx = dx * pw, sy = dy * ph;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - sz); ctx.lineTo(sx + sz * 0.3, sy - sz * 0.3); ctx.lineTo(sx + sz, sy); ctx.lineTo(sx + sz * 0.3, sy + sz * 0.3);
+        ctx.lineTo(sx, sy + sz); ctx.lineTo(sx - sz * 0.3, sy + sz * 0.3); ctx.lineTo(sx - sz, sy); ctx.lineTo(sx - sz * 0.3, sy - sz * 0.3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   // ---- flip counter ---------------------------------------------------------
@@ -136,6 +212,7 @@ export class HudView {
     const ft = timeS - this.flipT0;
     const lit = hud.deathsJustTicked;
     const chars = str;
+    const oldStr = this.prevStr;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     for (let i = 0; i < chars.length; i++) {
@@ -149,59 +226,52 @@ export class HudView {
       }
       const fromEnd = chars.length - 1 - i;
       const isLast = fromEnd === 0;
-      const flipping = (this.flipMask >> fromEnd) & 1 && ft < FLIP_S + 0.35;
-      let scaleY = 1, showOld = false;
-      if (flipping) {
-        if (ft < FLIP_S) {
-          const p = ft / FLIP_S;
-          scaleY = Math.abs(Math.cos(p * Math.PI));
-          showOld = p < 0.5;
-        } else {
-          const q = ft - FLIP_S;
-          scaleY = 1 + 0.12 * Math.exp(-q * 12) * Math.sin(q * 30);
-        }
-      }
-      const oldStr = this.prevStr;
-      const oldC = oldStr.length === str.length ? oldStr[i] ?? c : c;
-      const glyph = showOld ? oldC : c;
-      const cardLit = isLast && lit && !showOld;
-      // shadow stays put; the card itself flips around its hinge line
+      const f = (this.flipMask >> fromEnd) & 1 ? flipFrame(ft, this.reduced) : null;
+      const flipping = f !== null && !f.done;
+      const oldC = oldStr.length === str.length ? oldStr[i] ?? c : ' ';
+      const newFill = isLast && lit ? BLOB : CREAM;
+      // shadow stays put; the card bounces above it as the flap lands
       ctx.fillStyle = INK;
       ctx.beginPath();
       ctx.roundRect(x, y + 5 * s, cw, ch, r);
       ctx.fill();
-      ctx.save();
-      ctx.translate(0, y + ch / 2);
-      ctx.scale(1, Math.max(0.02, scaleY));
-      ctx.translate(0, -(y + ch / 2));
-      ctx.beginPath();
-      ctx.roundRect(x, y, cw, ch, r);
-      ctx.fillStyle = cardLit ? BLOB : CREAM;
-      ctx.fill();
-      ctx.lineWidth = 3 * s;
-      ctx.strokeStyle = INK;
-      ctx.stroke();
-      ctx.font = fontDigit;
+      const lift = f ? -f.bounce * ch * 0.4 : 0;
+      const card: FlapCard = { x, y: y + lift, cw, ch, r, s, font: fontDigit, fs };
+      if (!flipping) {
+        flapHalf(ctx, card, 'top', c, newFill, 1, 0);
+        flapHalf(ctx, card, 'bottom', c, newFill, f ? 1 - Math.max(0, -f.bounce) * 0.6 : 1, 0);
+      } else if (this.reduced) {
+        flapHalf(ctx, card, 'top', oldC, CREAM, 1, 0);
+        flapHalf(ctx, card, 'bottom', oldC, CREAM, 1, 0);
+        ctx.globalAlpha = f.fade;
+        flapHalf(ctx, card, 'top', c, newFill, 1, 0);
+        flapHalf(ctx, card, 'bottom', c, newFill, 1, 0);
+        ctx.globalAlpha = 1;
+      } else {
+        // behind the flaps: the new top half and the old bottom half
+        flapHalf(ctx, card, 'top', c, newFill, 1, 0);
+        flapHalf(ctx, card, 'bottom', oldC, CREAM, 1, f.bottom * 0.25);
+        if (f.top > 0) flapHalf(ctx, card, 'top', oldC, CREAM, f.top, (1 - f.top) * 0.5);
+        if (f.bottom > 0) flapHalf(ctx, card, 'bottom', c, newFill, f.bottom, (1 - f.bottom) * 0.45);
+      }
+      // the split line and its hinges
       ctx.fillStyle = INK;
-      ctx.fillText(glyph, x + cw / 2, y + ch / 2 + fs * 0.35);
       ctx.globalAlpha = 0.9;
-      ctx.fillRect(x, y + ch / 2 - 1.5 * s, cw, 3 * s);
+      ctx.fillRect(x, y + lift + ch / 2 - 1.5 * s, cw, 3 * s);
       ctx.globalAlpha = 1;
-      ctx.restore();
-      // hinges
-      ctx.fillStyle = INK;
       ctx.beginPath();
-      ctx.roundRect(x - 1.5 * s, y + ch / 2 - 5 * s, 4.5 * s, 10 * s, 2 * s);
-      ctx.roundRect(x + cw - 3 * s, y + ch / 2 - 5 * s, 4.5 * s, 10 * s, 2 * s);
+      ctx.roundRect(x - 1.5 * s, y + lift + ch / 2 - 5 * s, 4.5 * s, 10 * s, 2 * s);
+      ctx.roundRect(x + cw - 3 * s, y + lift + ch / 2 - 5 * s, 4.5 * s, 10 * s, 2 * s);
       ctx.fill();
       if (isLast && lit) {
-        // "+1" pops with a bounce once the card has flipped
-        const pt = timeS - Math.max(this.tickT0, this.flipT0) - FLIP_S * 0.5;
+        // "+1" pops with a bounce once the top flap has gone over
+        const pt = timeS - Math.max(this.tickT0, this.flipT0) - FLIP_S * 0.55;
         if (pt > 0) {
-          const pop = pt < 0.35 ? 1 + 0.35 * Math.sin((pt / 0.35) * Math.PI) * (1 - pt / 0.35) : 1;
-          const grow = Math.min(1, pt / 0.12);
-          const px = x + cw * 0.5, py = y - (phone ? 6 : 10) * s - Math.min(1, pt * 3) * 3 * s;
+          const pop = this.reduced ? 1 : pt < 0.35 ? 1 + 0.35 * Math.sin((pt / 0.35) * Math.PI) * (1 - pt / 0.35) : 1;
+          const grow = this.reduced ? 1 : Math.min(1, pt / 0.12);
+          const px = x + cw * 0.5, py = y - (phone ? 6 : 10) * s - (this.reduced ? 0 : Math.min(1, pt * 3) * 3 * s);
           ctx.save();
+          if (this.reduced) ctx.globalAlpha = Math.min(1, pt / 0.25);
           ctx.translate(px, py);
           ctx.rotate((12 * Math.PI) / 180);
           ctx.scale(grow * pop, grow * pop);
@@ -217,6 +287,7 @@ export class HudView {
       }
       x += cw + gap;
     }
+    ctx.textAlign = 'center';
     ctx.font = `700 ${((phone ? 13 : 16) * s0).toFixed(1)}px ${FONT_TEXT}`;
     ctx.fillStyle = pal.hudSoft;
     ctx.fillText('deaths', L.w / 2, y + ch + (phone ? 24 : 32) * s0);
@@ -285,33 +356,43 @@ export class HudView {
     ctx.fillStyle = INK;
     ctx.fill();
     // sound + settings
-    const bx = L.w - (phone ? 30 : 40) * s;
-    icon(ctx, 'settings', bx, y, (phone ? 15 : 18) * s);
-    icon(ctx, 'sound', bx - (phone ? 38 : 48) * s, y, (phone ? 15 : 18) * s);
+    for (const b of hudButtons(L)) icon(ctx, b.kind, b.cx, b.cy, b.r, b.kind === 'sound' && !!hud.muted);
   }
 
   // ---- death card -----------------------------------------------------------
-  drawDeathCard(ctx: CanvasRenderingContext2D, L: Layout, card: SceneDeathCard, timeS: number): void {
+  /** The death card: slides in when a card appears, slides out after the reset. */
+  drawDeathCard(ctx: CanvasRenderingContext2D, L: Layout, timeS: number): void {
+    const card = this.hadCard ? this.lastCard : timeS - this.cardOutT0 < CARD_OUT_S ? this.lastCard : null;
+    if (!card) return;
     const s = uiScale(L) * (L.phone ? 1 : 1.12);
+    const reduced = this.reduced;
     const t = timeS - this.cardT0;
-    const inK = Math.min(1, t / 0.4);
-    const back = (k: number) => 1 + 2.2 * Math.pow(k - 1, 3) + 1.2 * Math.pow(k - 1, 2);
-    const drop = (1 - back(inK)) * 60 * s;
-    const cw = Math.min(318 * s, L.w - 32);
+    const out = this.hadCard ? 0 : Math.min(1, (timeS - this.cardOutT0) / CARD_OUT_S);
+    const cw = Math.min(330 * s, L.w - 32);
     const mid = L.w / 2;
-    const soft = 'rgba(42,27,61,.7)';
+    const soft = 'rgba(42,27,61,.72)';
     const f15 = `700 ${(15 * s).toFixed(1)}px ${FONT_TEXT}`;
-    const line1 = `${card.nearRecord ? 'So close. ' : ''}Run ${fmt(card.run)} made it`;
+    const f13 = `600 ${(13 * s).toFixed(1)}px ${FONT_TEXT}`;
+    const line1 = `Run ${fmt(card.run)} made it`;
     const big = `${Math.round(clamp01(card.progress) * 100)}%`;
-    const tail = `of the way, then the ${card.cause} got it.`;
-    const lines = wrap(ctx, f15, tail, cw - 40 * s);
+    const lines = wrap(ctx, f15, `of the way, ${card.line}`, cw - 44 * s);
     const lh = 21 * s;
-    const chh = 132 * s + lines.length * lh;
+    const footer = card.countdown ? `Back to the start in ${card.countdown}` : '';
+    const chh = 128 * s + lines.length * lh + (footer ? 30 * s : 4 * s);
     const cy0 = L.phone ? 160 * uiScale(L) : Math.max(170 * uiScale(L), L.h * 0.2);
+
+    // in: drop from above the screen with a back-ease and a settling tilt; out: lift away
+    const inK = reduced ? 1 : Math.min(1, t / 0.5);
+    const back = (k: number) => 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
+    const offY = reduced ? 0 : -(1 - back(inK)) * (cy0 + chh + 40) - out * out * (cy0 + chh + 40);
+    const tiltDeg = reduced ? -2 : -2 - 7 * (1 - inK) * (1 - inK) + 2.5 * Math.exp(-Math.max(0, t - 0.4) * 5) * Math.sin(Math.max(0, t - 0.4) * 14) * (inK >= 1 ? 1 : 0) + out * 6;
+    const alpha = reduced ? Math.min(1, t / 0.3) * (1 - out) : Math.min(1, t / 0.08);
+    if (alpha <= 0) return;
+
     ctx.save();
-    ctx.globalAlpha = Math.min(1, t / 0.15);
-    ctx.translate(mid, cy0 + chh / 2 + drop);
-    ctx.rotate((-2 * Math.PI) / 180 * (0.5 + 0.5 * inK));
+    ctx.globalAlpha = alpha;
+    ctx.translate(mid, cy0 + chh / 2 + offY);
+    ctx.rotate((tiltDeg * Math.PI) / 180);
     ctx.translate(-mid, -(cy0 + chh / 2));
     const cx0 = mid - cw / 2;
     ctx.fillStyle = INK;
@@ -339,9 +420,92 @@ export class HudView {
     ctx.fillText(big, mid, cy0 + 100 * s);
     ctx.font = f15;
     ctx.fillStyle = INK;
-    lines.forEach((ln, i) => ctx.fillText(ln, mid, cy0 + 132 * s + i * lh));
+    lines.forEach((ln, i) => ctx.fillText(ln, mid, cy0 + 130 * s + i * lh));
+    if (footer) {
+      const fy = cy0 + 130 * s + (lines.length - 1) * lh + 30 * s;
+      ctx.strokeStyle = 'rgba(42,27,61,.18)';
+      ctx.lineWidth = 2 * s;
+      ctx.setLineDash([2 * s, 5 * s]);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx0 + 26 * s, fy - 19 * s);
+      ctx.lineTo(cx0 + cw - 26 * s, fy - 19 * s);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = f13;
+      ctx.fillStyle = soft;
+      ctx.fillText(footer, mid, fy);
+    }
+    if (card.nearRecord) {
+      // a pink "So close." sticker slapped on the top-left corner
+      const st = reduced ? 1 : Math.min(1, Math.max(0, (t - 0.35) / 0.25));
+      if (st > 0) {
+        const pop = reduced ? 1 : back(st);
+        const font = `${(17 * s).toFixed(1)}px ${FONT_DISPLAY}`;
+        const tw = this.measure(ctx, font, 'So close.');
+        const pw = tw + 24 * s, ph = 32 * s;
+        ctx.save();
+        ctx.translate(cx0 + 18 * s + pw / 2, cy0 - 2 * s);
+        ctx.rotate((-9 * Math.PI) / 180);
+        ctx.scale(pop, pop);
+        ctx.fillStyle = INK;
+        ctx.beginPath();
+        ctx.roundRect(-pw / 2, -ph / 2 + 3.5 * s, pw, ph, ph / 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.roundRect(-pw / 2, -ph / 2, pw, ph, ph / 2);
+        ctx.fillStyle = HAZARD;
+        ctx.fill();
+        ctx.lineWidth = 3 * s;
+        ctx.strokeStyle = INK;
+        ctx.stroke();
+        ctx.font = font;
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = CREAM_HI;
+        ctx.fillText('So close.', 0, 1.5 * s);
+        ctx.restore();
+      }
+    }
     ctx.restore();
   }
+}
+
+interface FlapCard { x: number; y: number; cw: number; ch: number; r: number; s: number; font: string; fs: number }
+
+/**
+ * One half of a split-flap card, folded about the hinge line: `scaleY` 1 is flat,
+ * 0 edge-on. `shade` darkens it as it turns away from the light.
+ */
+function flapHalf(ctx: CanvasRenderingContext2D, c: FlapCard, half: 'top' | 'bottom', glyph: string, fill: string, scaleY: number, shade: number): void {
+  const hinge = c.y + c.ch / 2;
+  const pad = 4 * c.s;
+  ctx.save();
+  ctx.beginPath();
+  if (half === 'top') ctx.rect(c.x - pad, c.y - pad - c.ch, c.cw + pad * 2, c.ch * 1.5 + pad);
+  else ctx.rect(c.x - pad, hinge, c.cw + pad * 2, c.ch * 1.5 + pad);
+  ctx.clip();
+  ctx.translate(0, hinge);
+  ctx.scale(1, Math.max(0.001, scaleY));
+  ctx.translate(0, -hinge);
+  ctx.beginPath();
+  ctx.roundRect(c.x, c.y, c.cw, c.ch, c.r);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  if (glyph.trim()) {
+    ctx.font = c.font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = INK;
+    ctx.fillText(glyph, c.x + c.cw / 2, c.y + c.ch / 2 + c.fs * 0.35);
+  }
+  if (shade > 0.005) {
+    ctx.fillStyle = `rgba(42,27,61,${Math.min(0.8, shade).toFixed(3)})`;
+    ctx.fill();
+  }
+  ctx.lineWidth = 3 * c.s;
+  ctx.strokeStyle = INK;
+  ctx.stroke();
+  ctx.restore();
 }
 
 function wrap(ctx: CanvasRenderingContext2D, font: string, text: string, maxW: number): string[] {
@@ -365,7 +529,7 @@ function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
-function icon(ctx: CanvasRenderingContext2D, kind: 'sound' | 'settings', cx: number, cy: number, r: number): void {
+function icon(ctx: CanvasRenderingContext2D, kind: 'sound' | 'settings', cx: number, cy: number, r: number, muted = false): void {
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fillStyle = CREAM;
@@ -388,8 +552,13 @@ function icon(ctx: CanvasRenderingContext2D, kind: 'sound' | 'settings', cx: num
     ctx.closePath();
     ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(5.5, -5); ctx.quadraticCurveTo(9, 0, 5.5, 5);
-    ctx.moveTo(8.5, -8); ctx.quadraticCurveTo(14, 0, 8.5, 8);
+    if (muted) {
+      ctx.moveTo(6, -4.5); ctx.lineTo(12, 4.5);
+      ctx.moveTo(12, -4.5); ctx.lineTo(6, 4.5);
+    } else {
+      ctx.moveTo(5.5, -5); ctx.quadraticCurveTo(9, 0, 5.5, 5);
+      ctx.moveTo(8.5, -8); ctx.quadraticCurveTo(14, 0, 8.5, 8);
+    }
     ctx.stroke();
   } else {
     ctx.beginPath();

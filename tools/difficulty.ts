@@ -1,7 +1,7 @@
-// Level difficulty report. Takes the solver's robust route through LEVEL1 and, for every input
+// Level difficulty report. Takes the solver's route through LEVEL1 and, for every input
 // change on it, measures how early and how late that change could be made and still survive
-// (its timing window). A crowd's timing is assumed to spread with standard deviation SIGMA, so
-// each change succeeds with probability P(-early < error < late). A zone's pass rate is the
+// (its timing window). A crowd aims at the middle of each window and its timing spreads with
+// standard deviation SIGMA, so each change succeeds with probability P(|error| < width/2). A zone's pass rate is the
 // product over its changes. Assumption (spec §6.4 targets): a coordinated crowd; SIGMA per size.
 // Usage: npx tsx tools/difficulty.ts [--replan]   (the route is cached in tools/out/route.json)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -19,8 +19,8 @@ mkdirSync('tools/out', { recursive: true });
 let plan: Control[];
 if (!process.argv.includes('--replan') && existsSync(routeFile)) plan = JSON.parse(readFileSync(routeFile, 'utf8'));
 else {
-  console.log('solving a robust route through the whole level (several minutes)…');
-  const r = solve(L, L.goalX - 0.5, 400, 1200, undefined, 1, true);
+  console.log('solving a route through the whole level (about 10 minutes)…');
+  const r = solve(L, L.goalX - 0.5, 400, 1200);
   if (!r.ok) throw new Error(`no route: stuck at x=${r.maxX.toFixed(1)}`);
   plan = r.plan;
   writeFileSync(routeFile, JSON.stringify(plan));
@@ -77,7 +77,8 @@ for (const [label, sigma] of Object.entries(SIGMA)) {
   let all = 1;
   L.zones.forEach((z, zi) => {
     let p = 1;
-    for (const m of moments) if (m.zone === zi) p *= phi(m.late / 60 / sigma) - phi(-m.early / 60 / sigma);
+    // A crowd aims at the middle of each window, so only its width matters.
+    for (const m of moments) if (m.zone === zi) { const half = (m.early + m.late) / 2 / 60; p *= phi(half / sigma) - phi(-half / sigma); }
     all *= p;
     console.log(`  ${z.name.padEnd(14)} pass ${(100 * p).toFixed(0).padStart(3)}%   target ${(100 * TARGETS[zi]!).toFixed(0)}%`);
   });

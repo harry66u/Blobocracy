@@ -92,8 +92,8 @@ export interface SceneFx {
   /** Cover fade (reduced-motion swoop), 0..1. */
   fade: number;
   banner: SceneBanner | null;
-  /** World x of the in-world record flag, or null. */
-  recordFlagX: number | null;
+  /** The in-world record flag: world x and the text on it (e.g. "83%"), or null. */
+  recordFlag: { x: number; label: string } | null;
   /** Sky cross-fade speed multiplier (fast during the swoop, slow under reduced motion). */
   skyRate: number;
 }

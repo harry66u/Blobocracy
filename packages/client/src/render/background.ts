@@ -93,7 +93,6 @@ export class Background {
   private readonly to = new Float64Array(NUM);
   private readonly cur = new Float64Array(NUM);
   private target: Sky | null = null;
-  private t0 = 0;
   private settled = false;
 
   private skyGrad: CanvasGradient | null = null;
@@ -103,7 +102,13 @@ export class Background {
   private stars: HTMLCanvasElement | OffscreenCanvas | null = null;
   private starsKey = '';
 
-  update(sky: Sky, timeS: number): void {
+  private prog = 1;
+  private lastT = 0;
+
+  /** `rate` speeds the cross-fade up (the swoop back to the start) or slows it (reduced motion). */
+  update(sky: Sky, timeS: number, rate = 1): void {
+    const dt = Math.min(0.25, Math.max(0, timeS - this.lastT));
+    this.lastT = timeS;
     if (this.target === null) {
       this.target = sky;
       this.cur.set(ENCODED[sky]);
@@ -117,11 +122,12 @@ export class Background {
       for (let i = 0; i < COLOR_FIELDS.length; i++) this.from[i * 4] = ((this.from[i * 4]! % 360) + 360) % 360;
       this.to.set(ENCODED[sky]);
       this.target = sky;
-      this.t0 = timeS;
+      this.prog = 0;
       this.settled = false;
     }
     if (this.settled) return;
-    const t = Math.min(1, Math.max(0, (timeS - this.t0) / TRANSITION_S));
+    this.prog = Math.min(1, this.prog + (dt * Math.max(0, rate)) / TRANSITION_S);
+    const t = this.prog;
     const k = smooth(t);
     for (let i = 0; i < NUM; i++) {
       const isHue = i < COLOR_FIELDS.length * 4 && i % 4 === 0;
