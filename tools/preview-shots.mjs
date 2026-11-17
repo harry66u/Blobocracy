@@ -1,6 +1,7 @@
 // Screenshots of the renderer preview harness (packages/client/preview.html) for every
 // sky plus the death and paused states, and every milestone-2 mechanic (mech-*), at
 // desktop 1600x900 and phone 390x844.
+// The big moments (moment-*) are played in slow motion and captured at a set age.
 // Usage: node tools/preview-shots.mjs [--dpr=2] [--only=<name part>]   Output: tools/out/preview-*.png
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -56,6 +57,31 @@ const states = [
   { name: 'mech-chomp', q: 'level=mech&dots=40&sky=purple&still=1&strain=0&x=141.5&chomp=2.6&at=0.05&freeze=1' },
   { name: 'mech-chomp-near', q: 'level=mech&dots=40&sky=purple&still=1&strain=0&x=141.5&chomp=6.5&at=0.05&freeze=1' },
   { name: 'mech-run', q: 'level=mech&dots=40&sky=sunset&x=44&at=2.2' },
+  // big moments: `age` is how far into the moment (preview seconds) to capture; slow=0.1 makes that precise
+  ...['press', 'spikes', 'ceiling spikes', 'pit', 'saw', 'chomp'].flatMap((c) => {
+    const where = {
+      press: 'level=mech&sky=sunset&x=10&rt=1.63',
+      spikes: 'sky=blue&x=13&y=12',
+      'ceiling spikes': 'sky=blue&x=45.5&y=12.2',
+      pit: 'sky=blue&x=19&y=19',
+      saw: 'level=mech&sky=purple&x=126.5&rt=0.6',
+      chomp: 'level=mech&sky=purple&x=141.5&chomp=0.4',
+    }[c];
+    const slug = c.replace(' ', '-');
+    return [
+      { name: `moment-death-${slug}`, q: `${where}&dots=60&still=1&strain=0&at=0.05&moment=death&cause=${c}&slow=0.1`, age: 0.12 },
+      { name: `moment-death-${slug}-after`, q: `${where}&dots=60&still=1&strain=0&at=0.05&moment=death&cause=${c}&slow=0.25`, age: 1.5 },
+    ];
+  }),
+  { name: 'moment-flip', q: 'sky=blue&x=13&y=12&dots=60&still=1&strain=0&at=0.05&moment=death&cause=spikes&slow=0.05', age: 0.28 + 0.2 },
+  { name: 'moment-flip-early', q: 'sky=blue&x=13&y=12&dots=60&still=1&strain=0&at=0.05&moment=death&cause=spikes&slow=0.05', age: 0.28 + 0.1 },
+  { name: 'moment-card', q: 'level=mech&sky=sunset&x=10&rt=1.63&dots=60&still=1&strain=0&at=0.05&moment=death&cause=press&slow=0.3', age: 1.6 },
+  { name: 'moment-swoop', q: 'sky=purple&x=150&dots=60&still=1&strain=0&at=0.05&moment=swoop&cause=saw&slow=0.25', age: 3.5 + 0.45 },
+  { name: 'moment-zone', q: 'sky=sunset&x=73&dots=80&strain=0&at=0.3&moment=zone&slow=0.25', age: 0.75 },
+  { name: 'moment-zone-drop', q: 'sky=sunset&x=73&dots=80&strain=0&at=0.3&moment=zone&slow=0.1', age: 0.3 },
+  { name: 'moment-record', q: 'sky=sunset&x=100&dots=80&strain=0&at=0.3&moment=record&slow=0.25', age: 0.5 },
+  { name: 'moment-reduced-zone', q: 'sky=sunset&x=73&dots=80&strain=0&at=0.3&moment=zone&slow=0.25&reduced=1', age: 0.9 },
+  { name: 'settings', q: 'sky=blue&dots=80&still=1&strain=0&settings=1' },
 ];
 const views = [
   { name: 'desktop', viewport: { width: 1600, height: 900 }, touch: false },
@@ -76,7 +102,8 @@ try {
       page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
       await page.goto(`http://localhost:${PORT}/preview.html?${s.q}${v.touch ? '&touch=1' : ''}`);
       await page.waitForFunction(() => (window.__frames ?? 0) > 5, null, { timeout: 15000 });
-      await page.waitForTimeout(s.name === 'death' ? 1200 : 900);
+      if (s.age !== undefined) await page.waitForFunction((a) => (window.__momentAge ?? -1) >= a, s.age, { timeout: 60000, polling: 'raf' });
+      else await page.waitForTimeout(s.name === 'death' ? 1200 : 900);
       const file = join(out, `${name}.png`);
       await page.screenshot({ path: file });
       console.log('wrote', file);

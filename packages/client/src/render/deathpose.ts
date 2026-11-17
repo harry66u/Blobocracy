@@ -152,8 +152,8 @@ export function drawDeathPose(cause: string | null | undefined, p: PoseCtx): voi
 function pancakePose({ g, T, cx, feetY: y, t, timeS }: PoseCtx): void {
   // impact frame is squashed past flat; then it wobbles back to a pancake
   const k = 1 + 0.22 * Math.exp(-t * 5) * Math.cos(t * 18);
-  const halfW = T * (0.8 + 0.55 * k);
-  const hgt = T * Math.max(0.2, 1.6 - 1.2 * k);
+  const halfW = T * (0.8 + 0.78 * k);
+  const hgt = T * Math.max(0.3, 1.75 - 1.3 * k);
   const x0 = cx - halfW, x1 = cx + halfW;
   g.fillStyle = BLOB;
   g.strokeStyle = INK;
@@ -200,12 +200,13 @@ function pancakePose({ g, T, cx, feetY: y, t, timeS }: PoseCtx): void {
     g.fill();
     g.stroke();
   }
-  // X eyes and a little tongue
-  const ey = y - Math.max(hgt * 0.5, T * 0.12);
-  xEyes(g, T, cx, ey, T * 0.26, T * 0.1);
+  // X eyes and a little tongue, squeezed out to one side (the middle is usually under the press)
+  const fx = cx + halfW - T * 0.62;
+  const ey = y - Math.max(hgt * 0.5, T * 0.14);
+  xEyes(g, T, fx, ey, T * 0.2, T * 0.085);
   g.fillStyle = HAZARD;
   g.beginPath();
-  g.ellipse(cx + T * 0.12, y - T * 0.02, T * 0.09, T * 0.13, 0.3, 0, Math.PI);
+  g.ellipse(fx + T * 0.08, y - T * 0.02, T * 0.08, T * 0.12, 0.3, 0, Math.PI);
   g.fill();
   g.lineWidth = T * 0.04;
   g.stroke();

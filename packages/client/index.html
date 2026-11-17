@@ -4,18 +4,74 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#5FBFFF">
+<meta name="color-scheme" content="light">
 <title>Blobocracy</title>
 <meta name="description" content="Everyone on the internet controls the same blob. One life. Can we beat it together?">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 6C47 6 58 18 58 35C58 50 47 58 32 58C17 58 6 50 6 35C6 18 17 6 32 6Z' fill='%23FFD21F' stroke='%232A1B3D' stroke-width='5'/%3E%3Cpath d='M12 44C17 54 47 54 53 44C49 55 15 55 12 44Z' fill='%23F2B300'/%3E%3Cellipse cx='23' cy='31' rx='7' ry='8.5' fill='%23fff' stroke='%232A1B3D' stroke-width='3'/%3E%3Cellipse cx='41' cy='31' rx='7' ry='8.5' fill='%23fff' stroke='%232A1B3D' stroke-width='3'/%3E%3Ccircle cx='25' cy='32' r='3.6' fill='%232A1B3D'/%3E%3Ccircle cx='43' cy='32' r='3.6' fill='%232A1B3D'/%3E%3Cpath d='M28 44Q32 47 36 44' fill='none' stroke='%232A1B3D' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/bagel-fat-one-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/atkinson-hyperlegible-next-latin.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  @font-face { font-family: 'Bagel Fat One'; font-weight: 400; font-display: swap; src: url(/fonts/bagel-fat-one-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
+  @font-face { font-family: 'Atkinson Hyperlegible Next'; font-weight: 400 800; font-display: swap; src: url(/fonts/atkinson-hyperlegible-next-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #5FBFFF; overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; }
   #game { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; }
   #status { position: fixed; left: 0; right: 0; bottom: 64px; text-align: center; font: 700 15px 'Atkinson Hyperlegible Next', system-ui, sans-serif; color: #2A1B3D; pointer-events: none; opacity: 0; transition: opacity .3s; }
   #status.show { opacity: 1; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* Loading screen: visible before any script runs, gone on the first state frame. */
+  #loading { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; overflow: hidden;
+    background: linear-gradient(#5FBFFF, #CFEFFF); color: #2A1B3D; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; transition: opacity .5s ease-out, transform .5s ease-out; }
+  #loading.gone { opacity: 0; transform: scale(1.04); pointer-events: none; }
+  #loading .sun { position: absolute; width: 22vmin; height: 22vmin; right: 14%; top: 18%; border-radius: 50%; background: #FFF6C9; box-shadow: 0 0 0 4vmin rgba(255,246,201,.45), 0 0 0 9vmin rgba(255,246,201,.2); }
+  #loading .hills { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 34vh; }
+  #loading .cloud { position: absolute; width: 150px; height: 60px; }
+  #loading h1 { position: relative; margin: 0; font: 400 clamp(48px, 13vw, 104px)/1 'Bagel Fat One', 'Atkinson Hyperlegible Next', system-ui, sans-serif; color: #FFD21F;
+    -webkit-text-stroke: clamp(7px, 1.6vw, 12px) #2A1B3D; paint-order: stroke fill; text-shadow: 0 clamp(5px, 1vw, 8px) 0 #2A1B3D; letter-spacing: .5px; transform: rotate(-3deg); }
+  #loading .stage { position: relative; width: 180px; height: 150px; margin-top: 4px; }
+  #loading .bob { position: absolute; left: 50%; bottom: 36px; width: 84px; height: 80px; margin-left: -42px; transform-origin: 50% 100%; animation: bl-bounce 0.9s cubic-bezier(.33,0,.67,1) infinite; }
+  #loading .shadow { position: absolute; left: 50%; bottom: 30px; width: 70px; height: 12px; margin-left: -35px; border-radius: 50%; background: rgba(42,27,61,.22); animation: bl-shadow 0.9s cubic-bezier(.33,0,.67,1) infinite; }
+  #loading .plat { position: absolute; left: 10px; right: 10px; bottom: 0; height: 36px; border: 3.5px solid #2A1B3D; border-radius: 14px; background: linear-gradient(#FFFBF1 0 9px, #FFF1D6 9px 60%, #F2D8AE); box-shadow: 0 5px 0 #2A1B3D; box-sizing: border-box; }
+  #loading p { position: relative; margin: 14px 0 0; font-weight: 800; font-size: 18px; }
+  #loading small { position: relative; display: block; min-height: 1.3em; font-weight: 600; font-size: 14.5px; color: rgba(42,27,61,.72); }
+  #loading .dots::after { content: ''; animation: bl-dots 1.2s steps(4) infinite; }
+  @keyframes bl-bounce {
+    0%, 100% { transform: translateY(0) scale(1.18, .8); }
+    12% { transform: translateY(-14px) scale(.9, 1.12); }
+    50% { transform: translateY(-62px) scale(.97, 1.03); }
+    88% { transform: translateY(-10px) scale(.92, 1.1); }
+  }
+  @keyframes bl-shadow { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.55); opacity: .45; } }
+  @keyframes bl-dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+  @media (prefers-reduced-motion: reduce) { #loading .bob, #loading .shadow, #loading .dots::after { animation: none; } #loading .bob { transform: none; } }
 </style>
 </head>
 <body>
 <canvas id="game" aria-label="Blobocracy: everyone steers the same blob. Arrow keys or A and D to move, W, up or space to jump."></canvas>
+<div id="loading" role="status" aria-live="polite">
+  <div class="sun" aria-hidden="true"></div>
+  <svg class="cloud" style="left:8%;top:16%" viewBox="0 0 150 60" aria-hidden="true"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
+  <svg class="cloud" style="right:6%;top:58%;width:110px" viewBox="0 0 150 60" aria-hidden="true"><path d="M20 58a20 20 0 0 1 8-38a28 28 0 0 1 52-6a24 24 0 0 1 42 12a16 16 0 0 1 6 32z" fill="#fff" opacity=".85"/></svg>
+  <svg class="hills" viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true"><path d="M0 60C60 20 110 30 160 55S280 20 400 45V100H0z" fill="#A9DDF7"/><path d="M0 80C70 55 130 70 200 82S330 60 400 74V100H0z" fill="#86CBEF"/></svg>
+  <h1>Blobocracy</h1>
+  <div class="stage" aria-hidden="true">
+    <div class="shadow"></div>
+    <svg class="bob" viewBox="-44 -84 88 88">
+      <path d="M0-78C25-78 40-58 40-34C40-10 26 0 0 0C-26 0-40-10-40-34C-40-58-25-78 0-78Z" fill="#FFD21F"/>
+      <path d="M-38-22C-30 2 30 2 39-22C36-4 22 0 0 0C-22 0-36-6-38-22Z" fill="#F2B300"/>
+      <ellipse cx="-20" cy="-60" rx="9" ry="5" transform="rotate(-35 -20 -60)" fill="#fff" opacity=".85"/>
+      <path d="M0-78C25-78 40-58 40-34C40-10 26 0 0 0C-26 0-40-10-40-34C-40-58-25-78 0-78Z" fill="none" stroke="#2A1B3D" stroke-width="5"/>
+      <ellipse cx="-13" cy="-44" rx="10" ry="12" fill="#fff" stroke="#2A1B3D" stroke-width="3.5"/>
+      <ellipse cx="13" cy="-44" rx="10" ry="12" fill="#fff" stroke="#2A1B3D" stroke-width="3.5"/>
+      <circle cx="-10" cy="-47" r="5" fill="#2A1B3D"/><circle cx="16" cy="-47" r="5" fill="#2A1B3D"/>
+      <ellipse cx="-24" cy="-26" rx="5" ry="3" fill="#FF5A78" opacity=".3"/><ellipse cx="24" cy="-26" rx="5" ry="3" fill="#FF5A78" opacity=".3"/>
+      <path d="M-6-25Q0-19 6-25" fill="none" stroke="#2A1B3D" stroke-width="3.5" stroke-linecap="round"/>
+    </svg>
+    <div class="plat"></div>
+  </div>
+  <p>Connecting to the blob<span class="dots" aria-hidden="true"></span></p>
+  <small id="loading-deaths"></small>
+</div>
 <div id="status" role="status"></div>
 <div id="announce" class="sr-only" aria-live="polite"></div>
 <script type="module" src="/src/main.ts"></script>

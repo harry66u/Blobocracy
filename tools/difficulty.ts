@@ -12,7 +12,8 @@ const L = LEVEL1;
 const SIGMA: Record<string, number> = { '3 players': 0.09, '30 players': 0.07, '2000 players': 0.05 };
 const TARGETS = [0.9, 0.6, 0.35, 0.25, 0.15, 0.1];
 const MAX_SHIFT = 18; // steps (300 ms) each way
-const HORIZON = 240; // steps simulated after a change to judge survival
+const FOLLOW = 30; // steps the shifted input is played before the crowd re-plans
+const RECOVER = 20; // tiles the crowd must still be able to make after the mistake
 
 const routeFile = 'tools/out/route.json';
 mkdirSync('tools/out', { recursive: true });
@@ -40,22 +41,38 @@ const snaps: { b: Body; dyn: Dynamics }[] = [];
   }
 }
 
-/** Survives if the change at step `at` happens `shift` steps later (negative = earlier)? */
+/**
+ * Can the crowd still recover if the change at step `at` happens `shift` steps later (negative =
+ * earlier)? Plays the shifted change for a moment, then lets the crowd re-plan the next stretch.
+ */
 function survives(at: number, shift: number): boolean {
   const from = Math.max(0, at + Math.min(0, shift) - 1);
   const { b: b0, dyn: d0 } = snaps[from]!;
   const b = { ...b0 }, dyn = cloneDynamics(d0);
   const before = steps[at - 1]!, after = steps[at]!;
-  const end = Math.min(steps.length, at + HORIZON);
+  const end = Math.min(steps.length, at + Math.max(0, shift) + FOLLOW);
   for (let i = from; i < end; i++) {
     let c = steps[i]!;
-    // Inside the shifted window, keep doing what was done before (late) or already switch (early).
     if (shift > 0 && i >= at && i < at + shift) c = { ...before, jumpPressed: false };
     if (shift < 0 && i >= at + shift && i < at) c = after;
     if (shift > 0 && i === at + shift) c = { ...after, jumpPressed: after.jumpHeld && !before.jumpHeld };
     if (stepBody(b, c, L, dyn)) return false;
   }
-  return true;
+  if (end >= steps.length) return true;
+  // Re-plan: can the crowd still get RECOVER tiles further from here?
+  return solve(L, Math.min(b.x + RECOVER, L.goalX - 0.5), 60, 8, { b, dyn }).ok;
+}
+
+/** Largest shift in 0..MAX_SHIFT (one direction) that is still recoverable, by binary search. */
+function windowSize(at: number, dir: 1 | -1): number {
+  if (!survives(at, dir)) return 0;
+  let lo = 1, hi = MAX_SHIFT;
+  if (survives(at, dir * hi)) return hi;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (survives(at, dir * mid)) lo = mid; else hi = mid;
+  }
+  return lo;
 }
 
 const phi = (z: number) => 0.5 * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (z + 0.044715 * z ** 3)));
@@ -64,9 +81,7 @@ const moments: Moment[] = [];
 for (let i = 1; i < steps.length; i++) {
   const a = steps[i - 1]!, c = steps[i]!;
   if (a.move === c.move && a.jumpHeld === c.jumpHeld) continue;
-  let late = 0, early = 0;
-  while (late < MAX_SHIFT && survives(i, late + 1)) late++;
-  while (early < MAX_SHIFT && survives(i, -(early + 1))) early++;
+  const late = windowSize(i, 1), early = windowSize(i, -1);
   if (late >= MAX_SHIFT && early >= MAX_SHIFT) continue; // not a critical moment
   moments.push({ at: i, x: snaps[i]!.b.x, zone: zoneAt(L, snaps[i]!.b.x).index, early, late });
 }

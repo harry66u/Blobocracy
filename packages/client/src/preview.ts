@@ -5,10 +5,18 @@
 //               &level=mech (the milestone-2 mechanics test level)  &rt=<run clock offset, s>
 //               &y=<start feet row>  &chomp=<tiles the Big Chomp's teeth are behind the blob>
 //               &crumbleDemo=1 (crumble tiles left of the blob caught at every stage of breaking)
+//               &moment=death|zone|record|swoop (play a big moment once the page is up; window.__momentAge
+//                 is its age in preview seconds)  &cause=press|spikes|ceiling spikes|pit|saw|chomp
+//               &slow=<time scale, e.g. 0.1 for slow motion>  &reduced=1 (reduced motion)  &settings=1 (open the panel)
+//               &dead=1 (with &moment=death: the blob lies at x/y as killed by &cause)
 import { makeEntity, type Entity } from '@blobocracy/shared';
 import './fonts.css';
 import { InputState, isGameKey } from './input.ts';
-import { camera, type Layout } from './layout.ts';
+import { type Layout } from './layout.ts';
+import { CameraRig } from './camera.ts';
+import { Director } from './director.ts';
+import { DEATH_SHAKE, DEATH_TOTAL_S, swoopDuration } from './moments.ts';
+import { mountHudControls } from './settings.ts';
 import { mountTouchControls } from './render/touch.ts';
 import { renderFrame, TILE_CEIL_SPIKE, TILE_CONVEYOR_L, TILE_CONVEYOR_R, TILE_CRUMBLE, TILE_ONEWAY, TILE_SOLID, TILE_SPIKE, TILE_SPRING, type Scene, type SceneCrumble, type SceneDot, type SceneLevel, type Sky } from './render/scene.ts';
 import { crumbleGone } from './render/danger.ts';
@@ -127,9 +135,15 @@ const preSim = Number(P.get('at') ?? (deathMode || pausedMode ? 0 : 1.2));
 const rtOffset = Number(P.get('rt') ?? 0);
 const chompBehind = P.has('chomp') ? Number(P.get('chomp')) : null;
 const crumbleDemo = P.get('crumbleDemo') === '1';
+const moment = P.get('moment');
+const cause = P.get('cause') ?? 'spikes';
+const timeScale = Number(P.get('slow') ?? 1);
+let reduced = P.get('reduced') === '1';
+let muted = false;
 
 // ---- fake blob physics (just enough to look like a real run) -----------------------
-const blob = { x: startX, y: startY, vx: 0, vy: 0, grounded: true, facing: 1 as 1 | -1, pull: 0, strain: 0, dead: false };
+const blob: { x: number; y: number; vx: number; vy: number; grounded: boolean; facing: 1 | -1; pull: number; strain: number; dead: boolean; deathCause?: string | null } = { x: startX, y: startY, vx: 0, vy: 0, grounded: true, facing: 1, pull: 0, strain: 0, dead: false };
+const startX0 = MECH ? 3 : 3;
 const crumbles: SceneCrumble[] = [];
 let runTime = rtOffset;
 const solidTile = (t: number) => t === TILE_SOLID || t === TILE_CRUMBLE || t === TILE_SPRING || t === TILE_CONVEYOR_L || t === TILE_CONVEYOR_R;
@@ -249,6 +263,8 @@ const scene: Scene = {
 const chomp = entities.find((e) => e.kind === 'chomp');
 
 let simT = 0;
+/** The blob lies dead where it is (moment=death, until the swoop). */
+let momentDead = false;
 // death preview: lie on the first floor-spike run of the zone
 let deathX = startX + 2;
 for (let x = startX; x < W; x++) if (LEVEL.tileAt(x, 12) === TILE_SPIKE) { let e = x; while (LEVEL.tileAt(e + 1, 12) === TILE_SPIKE) e++; deathX = (x + e + 1) / 2; break; }
@@ -262,7 +278,7 @@ function simulate(dt: number): void {
   blob.pull = (R - L) / Math.max(1, dots.length);
   blob.strain = Math.min(1, (2 * Math.min(L, R)) / Math.max(1, L + R));
   if (forcedStrain !== null) blob.strain = Number(forcedStrain);
-  if (!deathMode && !pausedMode && !still) {
+  if (!deathMode && !pausedMode && !still && !momentDead) {
     const bits = input.bits;
     const pull = bits & 1 ? -1 : bits & 2 ? 1 : 1;
     stepBlob(dt, pull, shouldJump() || (bits & 4) !== 0);
@@ -288,7 +304,7 @@ function simulate(dt: number): void {
     scene.hud.deaths = 4812;
     scene.hud.deathsJustTicked = true;
     scene.hud.progress = 0.78;
-    scene.deathCard = { run: 4812, progress: 0.78, cause: 'Spikes', nearRecord: true };
+    scene.deathCard = { run: 4812, progress: 0.78, line: 'then the Spikes popped it.', nearRecord: true, countdown: 3 };
   } else {
     const k = Math.floor(simT / 7);
     scene.hud.deaths = 4811 + k;
@@ -315,24 +331,94 @@ async function main(): Promise<void> {
   for (let t = 0; t < preSim; t += 1 / 60) simulate(1 / 60);
   if (deathMode || pausedMode) simulate(1 / 60);
 
-  let cam: { x: number; y: number } | null = null;
-  let lastLayout: Layout | null = null;
+  const rig = new CameraRig();
+  const director = new Director(() => reduced);
+  const W0 = { deaths: 4811, record: { progress: 0.83, run: 3940 }, run: 4812 };
+  director.welcome(W0);
+  const controls = mountHudControls(document.body, {
+    layout: () => view.layout,
+    muted: () => muted,
+    setMuted: (m) => { muted = m; },
+    reduced: () => reduced,
+    setReduced: (on) => { reduced = on; },
+  });
+  if (P.get('settings') === '1') controls.open();
   let last = performance.now();
   let clock = simT;
+  let momentT0: number | null = null;
+  let swooped = false;
+  const stats = window as unknown as { __frames?: number; __renderMs?: number; __maxMs?: number; __momentAge?: number };
+  const progressOfX = (x: number) => x / W;
+  const startMoment = () => {
+    momentT0 = clock;
+    if (moment === 'death') {
+      momentDead = true;
+      blob.dead = true;
+      blob.vx = blob.vy = 0;
+      director.onDeath({ run: 4812, cause, progress: 0.78, deaths: 4812, nearRecord: true }, clock);
+      if (!reduced) rig.kick(DEATH_SHAKE.amp, DEATH_SHAKE.dur);
+    } else if (moment === 'swoop') {
+      momentDead = true;
+      blob.dead = true;
+      director.onDeath({ run: 4812, cause, progress: progressOfX(blob.x), deaths: 4812, nearRecord: false }, clock);
+    } else if (moment === 'zone') {
+      const z = LEVEL.zones.find((zz) => blob.x >= zz.startX && blob.x < zz.endX) ?? LEVEL.zones[0]!;
+      director.onZone(z.index, z.name, clock);
+    } else if (moment === 'record') {
+      // a record just behind the blob, so this run passes it right away
+      director.welcome({ ...W0, record: { progress: progressOfX(blob.x - 1.2), run: 3940 } });
+      director.frame(clock, W0.run, progressOfX(blob.x - 2), true);
+    }
+  };
   const frame = (now: number) => {
-    const dt = Math.min(0.1, (now - last) / 1000);
+    const dt = Math.min(0.1, (now - last) / 1000) * timeScale;
     last = now;
     if (!freeze) simulate(dt);
     clock += dt;
+    if (moment && momentT0 === null && (stats.__frames ?? 0) > 3) startMoment();
+    const age = momentT0 === null ? null : clock - momentT0;
+    stats.__momentAge = age ?? -1;
+    if (moment === 'swoop' && age !== null && age > DEATH_TOTAL_S && !swooped) {
+      // the reset: everyone back to the start, camera flies there
+      swooped = true;
+      const from = blob.x;
+      director.onReset(4813, clock);
+      momentDead = false;
+      blob.dead = false;
+      blob.x = startX0; blob.y = startY; blob.vx = 0;
+      rig.swoop(swoopDuration(from - startX0, reduced), reduced);
+    }
     const L = view.layout;
-    const focus = { x: blob.x, y: blob.y };
-    cam = camera(L, focus, lastLayout === null ? null : cam, dt);
-    lastLayout = L;
+    let cam = rig.update(L, blob, dt, reduced);
+    const sh = rig.shakeOffset();
+    cam = { x: cam.x + sh.x, y: cam.y + sh.y };
     const viewW = L.w / L.tile;
     cam.x = Math.max(-1, Math.min(W + 1 - viewW, cam.x));
+    if (moment) {
+      const d = director.frame(clock, swooped ? 4813 : 4812, progressOfX(blob.x), !blob.dead);
+      blob.deathCause = blob.dead ? cause : null;
+      scene.hud.deaths = d.deaths;
+      scene.hud.deathsJustTicked = d.deathsJustTicked;
+      scene.hud.record = d.record;
+      scene.hud.recordLabel = d.recordLabel;
+      scene.hud.recordPop = d.recordPop;
+      scene.deathCard = d.card;
+      if (rig.swoopK !== null) {
+        scene.hud.progress = progressOfX(cam.x + L.lookAhead);
+        const z = LEVEL.zones.find((zz) => cam.x + L.lookAhead >= zz.startX && cam.x + L.lookAhead < zz.endX) ?? LEVEL.zones[0]!;
+        scene.zoneSky = z.sky;
+      }
+      scene.fx = {
+        reduced, freeze: d.freeze, flash: d.flash, vignette: d.vignette, fade: rig.swoopFade, banner: d.banner,
+        recordFlag: d.flagProgress === null ? null : { x: d.flagProgress * W, label: `${Math.round(d.flagProgress * 100)}%` },
+        skyRate: rig.swoopK !== null ? (reduced ? 50 : 3.5) : reduced ? 0.6 : 1,
+      };
+    } else {
+      scene.fx = { reduced, freeze: false, flash: 0, vignette: 0, fade: 0, banner: null, recordFlag: { x: 0.83 * W, label: '83%' }, skyRate: 1 };
+    }
+    scene.hud.muted = muted;
     const t0 = performance.now();
     renderFrame(view.ctx, L, cam, scene, clock);
-    const stats = window as unknown as { __frames?: number; __renderMs?: number; __maxMs?: number };
     const ms = performance.now() - t0;
     stats.__frames = (stats.__frames ?? 0) + 1;
     stats.__renderMs = (stats.__renderMs ?? 0) + ms;
