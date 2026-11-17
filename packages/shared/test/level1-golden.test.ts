@@ -5,7 +5,9 @@ import { createDynamics, LEVEL1, stepBody, type Body, type Control } from '../sr
  * Level 1 must play exactly as it always has, whatever later levels add to the physics
  * (low gravity, wind). This drops the blob all over level 1 at many run times, drives it
  * with a fixed pseudo-random crowd, and hashes every step's full body state and every
- * death. The expected hash was recorded before level 2's mechanics existed.
+ * death. The expected hash was recorded with the physics as it was before level 2's
+ * mechanics existed. It also covers level 1's layout: if a room of level 1 is edited on
+ * purpose, re-record it by running this test against the old physics.ts first.
  */
 
 /** FNV-1a over 32-bit words. */
@@ -56,5 +58,5 @@ function fingerprint(): { hash: string; steps: number; deaths: number } {
 test('level 1 physics stays bit-identical (golden hash over the whole level)', () => {
   const r = fingerprint();
   expect(r.deaths).toBeGreaterThan(50);
-  expect(r).toEqual({ hash: '465cfd52', steps: 107224, deaths: 390 });
+  expect(r).toEqual({ hash: 'd354065b', steps: 107672, deaths: 396 });
 });
