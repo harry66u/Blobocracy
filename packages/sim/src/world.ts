@@ -30,6 +30,9 @@ export class World {
   record: { progress: number; run: number } | null;
   maxProgress = 0;
   zone = 0;
+  /** Most players online / steering at once during the current run. */
+  peakOnline = 0;
+  peakActive = 0;
   private dyingLeft = 0;
 
   constructor(level: Level, init: WorldInit = { deaths: 0, record: null }) {
@@ -56,6 +59,7 @@ export class World {
     }
     this.phase = 'running';
     this.runTick++;
+    if (votes.active > this.peakActive) this.peakActive = votes.active;
 
     this.lastBlend = blend(votes, this.lastBlend.jumpHeld, this.lastBlend.freshHigh);
     const cause = stepBody(this.body, this.lastBlend, this.level);
@@ -72,6 +76,11 @@ export class World {
     return events;
   }
 
+  /** Called with the current connection count; feeds the run's peak for the death event. */
+  noteOnline(online: number): void {
+    if (online > this.peakOnline && this.phase !== 'dying') this.peakOnline = online;
+  }
+
   welcome(online: number): ServerEvent {
     return {
       t: 'welcome', levelId: this.level.id, version: this.level.version, deaths: this.deaths,
@@ -84,7 +93,11 @@ export class World {
     const nearRecord = this.record !== null && this.record.progress >= MIN_RECORD_FOR_NEAR_MISS
       && progress >= this.record.progress - NEAR_RECORD;
     this.deaths++;
-    events.push({ t: 'death', run: this.run, cause, progress, deaths: this.deaths, zone: this.zone, nearRecord });
+    events.push({
+      t: 'death', run: this.run, cause, progress, deaths: this.deaths, zone: this.zone, nearRecord,
+      peak: Math.max(this.peakOnline, this.peakActive), peakActive: this.peakActive,
+      secs: Math.round(this.runTick / TICK_HZ),
+    });
     if (this.record === null || progress > this.record.progress) {
       this.record = { progress, run: this.run };
       events.push({ t: 'record', run: this.run, progress });
@@ -99,6 +112,8 @@ export class World {
     this.maxProgress = 0;
     this.zone = 0;
     this.runTick = 0;
+    this.peakOnline = 0;
+    this.peakActive = 0;
     this.phase = 'running';
     this.lastBlend = { ...IDLE_BLEND };
     events.push({ t: 'reset', run: this.run });

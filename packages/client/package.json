@@ -1,2 +1,2 @@
 { "name": "@blobocracy/client", "version": "0.0.0", "private": true, "type": "module",
-  "dependencies": { "@blobocracy/shared": "*" } }
+  "dependencies": { "@blobocracy/shared": "*", "mp4-muxer": "5.2.2" } }

@@ -24,6 +24,8 @@ export class HudView {
   private cardT0 = -10;
   private hadCard = false;
   private readonly widths = new Map<string, number>();
+  /** CSS-px bottom edge (shadow included) of the last death card drawn, so DOM controls can sit under it. */
+  cardBottom = 0;
 
   update(hud: SceneHud, card: SceneDeathCard | null, timeS: number): void {
     if (this.shown < 0) {
@@ -302,7 +304,7 @@ export class HudView {
     const soft = 'rgba(42,27,61,.7)';
     const f15 = `700 ${(15 * s).toFixed(1)}px ${FONT_TEXT}`;
     const line1 = `${card.nearRecord ? 'So close. ' : ''}Run ${fmt(card.run)} made it`;
-    const big = `${Math.round(clamp01(card.progress) * 100)}%`;
+    const big = `${Math.floor(clamp01(card.progress) * 100)}%`; // floor: 99.6% never reads as 100%
     const tail = `of the way, then the ${card.cause} got it.`;
     const lines = wrap(ctx, f15, tail, cw - 40 * s);
     const lh = 21 * s;
@@ -341,6 +343,7 @@ export class HudView {
     ctx.fillStyle = INK;
     lines.forEach((ln, i) => ctx.fillText(ln, mid, cy0 + 132 * s + i * lh));
     ctx.restore();
+    this.cardBottom = cy0 + chh + 6 * s;
   }
 }
 

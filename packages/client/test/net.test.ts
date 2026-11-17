@@ -42,6 +42,23 @@ describe('connect', () => {
     expect(FakeSocket.all.length).toBe(1);
   });
 
+  test('when the game is packed (close 4001) it waits at least 10 s before trying again', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', 'performance'] });
+    vi.stubGlobal('WebSocket', FakeSocket);
+    const events: unknown[] = [];
+    connect('ws://x/ws', (e) => events.push(e));
+    const s = FakeSocket.all[0]!;
+    s.open();
+    s.onmessage?.({ data: '{"t":"packed","deaths":7,"online":5000}' });
+    s.readyState = 3;
+    (s.onclose as unknown as (e: { code: number }) => void)({ code: 4001 });
+    expect(events).toEqual([{ t: 'packed', deaths: 7, online: 5000 }]);
+    vi.advanceTimersByTime(9_000);
+    expect(FakeSocket.all.length).toBe(1);
+    vi.advanceTimersByTime(6_100);
+    expect(FakeSocket.all.length).toBe(2);
+  });
+
   test('on reconnect it re-sends what the player is holding', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', 'performance'] });
     vi.stubGlobal('WebSocket', FakeSocket);
