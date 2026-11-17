@@ -24,7 +24,7 @@ browsers ──WebSocket──▶ edge relays (1 always on, more start in a spik
 
 ## Play it on your computer
 
-You need [Node.js 22 or newer](https://nodejs.org/) and git.
+You need [Node.js 22 or 24](https://nodejs.org/) (not 25 or newer yet: the game server's WebSocket library doesn't support it) and git.
 
 ```bash
 git clone https://github.com/harry66u/Blobocracy.git

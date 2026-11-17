@@ -5,6 +5,16 @@
 // No database or Redis needed: without DATABASE_URL / REDIS_URL everything is kept in memory.
 // Env: PORT (server, default 8080), VIRTUAL_PLAYERS (same as --bots).
 import { spawn } from 'node:child_process';
+
+// The game server's WebSocket library (uWebSockets.js v20.52) ships for Node 20, 22, 23 and 24 only.
+// On another version the server would quit at startup while the website kept loading forever.
+const major = Number(process.versions.node.split('.')[0]);
+if (![20, 22, 23, 24].includes(major)) {
+  console.error(`\n  Blobocracy needs Node.js 22 or 24 (you have ${process.version}).`);
+  console.error('  Install Node 24 LTS from https://nodejs.org, open a new Terminal, then run:');
+  console.error('    rm -rf node_modules && npm install && npm run dev\n');
+  process.exit(1);
+}
 const i = process.argv.indexOf('--bots');
 const bots = i > 0 ? Number(process.argv[i + 1]) : Number(process.env.VIRTUAL_PLAYERS ?? 0);
 if (!Number.isFinite(bots) || bots < 0) { console.error('--bots needs a number, e.g. --bots 300'); process.exit(1); }
