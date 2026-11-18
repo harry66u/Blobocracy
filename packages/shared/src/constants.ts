@@ -21,11 +21,12 @@ export const PHYS = {
   jumpCutVelocity: 6,
   runSpeed: 7,
   accelGround: 45,
-  accelAir: 0.7 * 45,
+  /** Full grip in the air, so steering a landing is as sharp as on the ground. */
+  accelAir: 45,
   halfW: 0.55,
   halfH: 0.6,
   maxFall: 22,
-  coyoteS: 0.1,
+  coyoteS: 0.15,
   bufferS: 0.25,
   /** Launch speed off a spring: the bounce peaks about 5.5 tiles up, whatever jump is doing. */
   springVelocity: Math.sqrt(2 * GRAVITY * 5.5),

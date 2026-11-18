@@ -230,9 +230,22 @@ describe('jumping', () => {
       expect(pressAfter(4).vy).toBeLessThan(0);
     });
 
-    test('jump 8 steps after walking off a ledge does not fire', () => {
-      expect(pressAfter(8).vy).toBeGreaterThan(0);
+    test('jump 8 steps after walking off a ledge still fires (generous coyote time)', () => {
+      expect(pressAfter(8).vy).toBeLessThan(0);
     });
+
+    test('jump 12 steps after walking off a ledge does not fire', () => {
+      expect(pressAfter(12).vy).toBeGreaterThan(0);
+    });
+  });
+
+  test('in the air the blob steers as sharply as on the ground', () => {
+    const b = createBody(FLAT);
+    b.grounded = false;
+    b.y = 6;
+    b.vx = 0;
+    stepBody(b, RIGHT, FLAT);
+    expect(b.vx).toBeCloseTo(PHYS.accelGround / 60, 9);
   });
 
   test('a full-speed jump clears a 5-tile gap and lands', () => {
