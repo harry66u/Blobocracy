@@ -58,5 +58,5 @@ function fingerprint(): { hash: string; steps: number; deaths: number } {
 test('level 1 physics stays bit-identical (golden hash over the whole level)', () => {
   const r = fingerprint();
   expect(r.deaths).toBeGreaterThan(50);
-  expect(r).toEqual({ hash: 'd354065b', steps: 107672, deaths: 396 });
+  expect(r).toEqual({ hash: 'fa315fd7', steps: 107770, deaths: 397 });
 });

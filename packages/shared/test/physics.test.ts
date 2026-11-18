@@ -311,15 +311,35 @@ describe('deaths', () => {
     expect(causes[first]).toBe('spikes');
   });
 
-  test('spike hitboxes are inset', () => {
+  test('spike hitboxes are inset, and the blob is a smaller target than it looks', () => {
     const level = makeLevel([
       '.@....^...G',
       '###########',
     ]);
     const b = createBody(level);
-    b.x = 6 + 0.1 - PHYS.halfW; // right edge 0.1 into the spike tile
+    // Grazing the spike's edge with the blob's side is safe: 0.3 of its width over the tile.
+    b.x = 6 + 0.3 - PHYS.halfW;
     expect(stepBody(b, IDLE, level)).toBeNull();
-    b.x = 6 + 0.2 - PHYS.halfW; // right edge inside the middle 70%
+    // Well over the middle of the spike still kills.
+    b.x = 6 + 0.5 - PHYS.halfW + 0.2;
+    expect(stepBody(b, IDLE, level)).toBe('spikes');
+  });
+
+  test('a blob that only just clips a spike with its underside survives', () => {
+    const level = makeLevel([
+      '.@....^...G',
+      '###########',
+    ]);
+    const b = createBody(level);
+    b.x = 6.5;
+    b.grounded = false;
+    b.vy = 0;
+    // The spike sits in row 13 and fills the lower 60% of its tile, so its tip is at y = 13.4.
+    b.y = 13.4 - PHYS.halfH + 0.1; // underside 0.1 into the tip
+    expect(stepBody(b, IDLE, level)).toBeNull();
+    b.x = 6.5;
+    b.vy = 0;
+    b.y = 13.4 - PHYS.halfH + 0.4; // underside 0.4 into the spike
     expect(stepBody(b, IDLE, level)).toBe('spikes');
   });
 

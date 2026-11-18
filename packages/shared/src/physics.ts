@@ -31,6 +31,14 @@ const ENT_EPS = 1e-3;
 /** Floor spikes kill in their lower 60% and middle 70%; ceiling spikes are mirrored. */
 const SPIKE_INSET_X = 0.15;
 const SPIKE_DEPTH = 0.6;
+/**
+ * The blob is a smaller target for spikes than its collision box: it is round, so its corners
+ * are empty, and dying to a graze feels unfair. Its hurtbox is its box shrunk by this much
+ * on each side, and by BOTTOM on the underside (the spike tip a falling blob lands on).
+ */
+const HURT_INSET_X = 0.2;
+const HURT_INSET_BOTTOM = 0.15;
+const HURT_INSET_TOP = 0.1;
 /** A pit kills once the body's center sinks this many rows above the level's bottom edge. */
 const PIT_DEATH_ROWS = 2.5;
 /** The Big Chomp starts chasing once the blob gets this far past its start line. */
@@ -253,8 +261,8 @@ function windPushAt(b: Body, ctx: Ctx): number {
 
 /** The spike the body touches, if any, using the inset spike hitboxes. */
 function spikeHit(b: Body, level: Level): Cause | null {
-  const left = b.x - PHYS.halfW, right = b.x + PHYS.halfW;
-  const top = b.y - PHYS.halfH, bottom = b.y + PHYS.halfH;
+  const left = b.x - PHYS.halfW + HURT_INSET_X, right = b.x + PHYS.halfW - HURT_INSET_X;
+  const top = b.y - PHYS.halfH + HURT_INSET_TOP, bottom = b.y + PHYS.halfH - HURT_INSET_BOTTOM;
   const [tx0, tx1] = span(left, right);
   const [ty0, ty1] = span(top, bottom);
   for (let ty = ty0; ty <= ty1; ty++) {
