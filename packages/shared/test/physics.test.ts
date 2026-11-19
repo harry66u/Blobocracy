@@ -248,6 +248,24 @@ describe('jumping', () => {
     expect(b.vx).toBeCloseTo(PHYS.accelGround / 60, 9);
   });
 
+  test('hang time at the top of a jump: a full-speed jump clears a 6-tile gap and lands', () => {
+    const level = makeLevel([
+      '..@...........................G.........',
+      '###############......###################',
+      '###############......###################',
+      '###############......###################',
+    ]);
+    const b = createBody(level);
+    let jumped = false;
+    for (let i = 0; i < 300; i++) {
+      if (b.x >= 15) jumped = true;
+      expect(stepBody(b, { move: 1, jumpHeld: jumped }, level)).toBeNull();
+      if (jumped && b.grounded) break;
+    }
+    expect(b.grounded).toBe(true);
+    expect(b.x).toBeGreaterThan(21);
+  });
+
   test('a full-speed jump clears a 5-tile gap and lands', () => {
     const level = makeLevel([
       '..@...........................G.........',

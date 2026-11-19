@@ -93,7 +93,7 @@ describe('History', () => {
     const run = page.runs[0]!;
     expect(run).toMatchObject({ run: 1, levelVersion: 3, cause: 'pit', zoneReached: 1, peakPlayers: 7, clipId: 'clip1' });
     expect(run.durationMs).toBeGreaterThan(500);
-    expect(run.endedAt - run.startedAt).toBeGreaterThanOrEqual(run.durationMs);
+    expect(run.endedAt - run.startedAt).toBeGreaterThanOrEqual(run.durationMs - 1); // durationMs is rounded to whole ms
     expect(run.maxX).toBeGreaterThan(9);
 
     const clip = await h.mem.getClip('clip1');

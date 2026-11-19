@@ -104,6 +104,15 @@ export function createBody(level: Level): Body {
   };
 }
 
+/** A body at rest on the ground at (x, y), e.g. a checkpoint's pad. */
+export function createBodyAt(level: Level, x: number, y: number): Body {
+  const grounded = supported(level, x, y);
+  return {
+    x, y, vx: 0, vy: 0, grounded, coyote: grounded ? PHYS.coyoteS : 0, buffer: 0,
+    rising: false, prevJumpHeld: false, facing: 1, landed: 0,
+  };
+}
+
 const countDown = (t: number) => (t - DT > EPS ? t - DT : 0);
 const approach = (v: number, target: number, step: number) =>
   v < target ? Math.min(v + step, target) : Math.max(v - step, target);
@@ -332,8 +341,11 @@ export function stepBody(b: Body, c: Control, level: Level, dyn?: Dynamics): Cau
 
   // Vertical: exact integration under constant gravity (average of old and new velocity),
   // scaled by the zone's gravity where the blob is (low-gravity zones).
+  // Hang time: near the top of a jump (slow vertical speed, airborne) gravity eases off, so there
+  // is longer to line up a landing and a jump reaches further without getting any taller.
   const vy0 = b.vy;
-  const vy1 = Math.min(vy0 + PHYS.gravity * gravityAt(level, b.x) * DT, PHYS.maxFall);
+  const hang = !b.grounded && Math.abs(vy0) < PHYS.hangSpeed ? PHYS.hangGravity : 1;
+  const vy1 = Math.min(vy0 + PHYS.gravity * gravityAt(level, b.x) * hang * DT, PHYS.maxFall);
   b.vy = vy1;
   const wasGrounded = b.grounded;
   const how = moveY(b, ctx, ((vy0 + vy1) / 2) * DT);
