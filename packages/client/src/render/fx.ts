@@ -45,6 +45,58 @@ export function flagSpot(level: SceneLevel, x: number): { x: number; row: number
   return { x, row };
 }
 
+/**
+ * A checkpoint in the world: a short pole on its pad. Unreached it is a plain cream pennant;
+ * once reached it flies green with the percentage and waves.
+ */
+export function drawCheckpointFlag(
+  g: CanvasRenderingContext2D, T: number, sx: (x: number) => number, sy: (y: number) => number,
+  x: number, row: number, reached: boolean, label: string, timeS: number, viewW: number,
+): void {
+  const px = sx(x);
+  if (px < -T * 3 || px > viewW + T) return;
+  const baseY = sy(row);
+  const poleH = T * 2.3;
+  const topY = baseY - poleH;
+  g.save();
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+  g.beginPath();
+  g.roundRect(px - T * 0.06, topY, T * 0.12, poleH, T * 0.06);
+  g.fillStyle = CREAM_HI;
+  g.fill();
+  g.lineWidth = T * 0.07;
+  g.strokeStyle = INK;
+  g.stroke();
+  const fw = T * 1.25, fh = T * 0.78;
+  const amp = reached ? T * 0.07 : T * 0.02;
+  const wave = (k: number) => Math.sin(timeS * (reached ? 5 : 1.5) - k * 3) * amp * k;
+  const N = 8;
+  const flag = new Path2D();
+  const y0 = reached ? topY + T * 0.06 : topY + poleH * 0.45;
+  flag.moveTo(px + T * 0.04, y0);
+  for (let i = 1; i <= N; i++) { const k = i / N; flag.lineTo(px + T * 0.04 + fw * k, y0 + fh * 0.5 * k * 0.9 + wave(k)); }
+  for (let i = N; i >= 0; i--) { const k = i / N; flag.lineTo(px + T * 0.04 + fw * k, y0 + fh - fh * 0.5 * k * 0.9 + wave(k)); }
+  flag.closePath();
+  g.fillStyle = reached ? '#3fd08a' : CREAM;
+  g.fill(flag);
+  g.lineWidth = T * 0.07;
+  g.stroke(flag);
+  if (reached) {
+    g.font = `${(T * 0.3).toFixed(1)}px ${FONT_DISPLAY}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = INK;
+    g.fillText(label, px + T * 0.04 + fw * 0.4, y0 + fh * 0.5 + wave(0.4));
+  }
+  g.beginPath();
+  g.arc(px, topY - T * 0.04, T * 0.12, 0, Math.PI * 2);
+  g.fillStyle = reached ? '#ffd23f' : CREAM_SHADE;
+  g.fill();
+  g.stroke();
+  g.restore();
+}
+
 /** The record flag in the world: a pole with a waving pink pennant showing the record. */
 export function drawRecordFlag(
   g: CanvasRenderingContext2D, T: number, sx: (x: number) => number, sy: (y: number) => number,

@@ -1,6 +1,6 @@
 // Turns server frames + Director/Camera output into the renderer's Scene. Shared by the
 // live game (main.ts) and the clip player, so a clip looks exactly like the game did.
-import { DOT_EMPTY, DOT_LEFT, DOT_RIGHT, tileAt, zoneAt, type Body, type Level, type StateFrame } from '@blobocracy/shared';
+import { DOT_EMPTY, DOT_LEFT, DOT_RIGHT, PHYS, checkpointsOf, tileAt, zoneAt, type Body, type Level, type StateFrame } from '@blobocracy/shared';
 import { AudioCues } from './audiocues.ts';
 import type { DirectorFrame } from './director.ts';
 import { winFx } from './moments.ts';
@@ -77,6 +77,8 @@ export interface SceneParts {
   nextLevel?: { levelId: number; name: string } | null;
   /** The win clip exists (the card shows "Share the clip"). */
   winClip?: boolean;
+  /** The last checkpoint reached (0 = none). */
+  checkpoint?: number;
 }
 
 /** Assembles the Scene the renderer draws. */
@@ -115,6 +117,7 @@ export function composeScene(p: SceneParts): Scene {
       cascade: d.cascade,
     },
     deathCard: p.showCard ? d.card : null,
+    checkpoints: checkpointsOf(level).map((c) => ({ x: c.x, row: Math.round(c.y + PHYS.halfH), reached: c.index <= (p.checkpoint ?? 0), label: `${Math.round(c.progress * 100)}%` })),
     zoneSky: zoneAt(level, skyX).sky,
     paused: f?.phase === 'paused',
     runTime: p.runTime,

@@ -75,7 +75,7 @@ describe('World', () => {
     }
     expect(w.body.x).toBe(frozen.x);
     const ev = w.step(RIGHT);
-    expect(ev).toContainEqual({ t: 'reset', run: 2 });
+    expect(ev).toContainEqual({ t: 'reset', run: 2, checkpoint: 0, zone: 0 });
     expect(w.run).toBe(2);
     expect(w.body.x).toBeCloseTo(LEVEL.spawn.x);
     expect(w.zone).toBe(0);
@@ -130,5 +130,87 @@ describe('World dynamics', () => {
     for (let i = 0; i < 20; i++) w.step(STAND);
     expect(w.body.grounded).toBe(true);
     expect(w.body.y).toBeCloseTo(CRUMBLY.spawn.y, 9);
+  });
+});
+
+describe('checkpoints', () => {
+  // Floor tops at y = 13, so a standing blob has y = 12.4. Checkpoint 1 is on the solid floor of zone B,
+  // before the pit at x 10..13; spawn is x = 1.5 and the goal x = 19.5.
+  const CP = { index: 1, progress: (8.5 - 1.5) / 18, x: 8.5, y: 12.4 };
+  const cpWorld = () => new World(LEVEL, { deaths: 0, record: null }, { checkpoints: [CP] });
+
+  test('reaching it fires one checkpoint event and remembers it', () => {
+    const w = cpWorld();
+    const ev = runUntil(w, RIGHT, (e) => e.t === 'checkpoint');
+    expect(ev.filter((e) => e.t === 'checkpoint')).toEqual([{ t: 'checkpoint', run: 1, index: 1, progress: CP.progress }]);
+    expect(w.checkpoint).toBe(1);
+    const more = runUntil(w, RIGHT, (e) => e.t === 'death');
+    expect(more.some((e) => e.t === 'checkpoint')).toBe(false);
+  });
+
+  test('a death after it sends the blob back to the checkpoint, not the start', () => {
+    const w = cpWorld();
+    const ev = runUntil(w, RIGHT, (e) => e.t === 'death');
+    const death = ev.find((e) => e.t === 'death');
+    expect(death).toMatchObject({ t: 'death', cause: 'pit', checkpoint: 1 });
+    const after = runUntil(w, STAND, (e) => e.t === 'reset');
+    expect(after.find((e) => e.t === 'reset')).toMatchObject({ run: 2, checkpoint: 1, zone: 1 });
+    expect(w.body.x).toBe(8.5);
+    expect(w.body.y).toBeCloseTo(12.4, 9);
+    expect(w.body.grounded).toBe(true);
+    expect(w.zone).toBe(1);
+    expect(w.maxProgress).toBeCloseTo(CP.progress, 9);
+    expect(w.run).toBe(2);
+    expect(w.deaths).toBe(1);
+  });
+
+  test('a death before any checkpoint still returns to the start', () => {
+    const w = cpWorld();
+    w.body.y = 20; // straight into the pit
+    runUntil(w, STAND, (e) => e.t === 'reset');
+    expect(w.checkpoint).toBe(0);
+    expect(w.body.x).toBeCloseTo(1.5, 9);
+  });
+
+  test('the checkpoint survives several deaths and the welcome tells new players about it', () => {
+    const w = cpWorld();
+    runUntil(w, RIGHT, (e) => e.t === 'death');
+    runUntil(w, STAND, (e) => e.t === 'reset');
+    runUntil(w, RIGHT, (e) => e.t === 'death');
+    runUntil(w, STAND, (e) => e.t === 'reset');
+    expect(w.checkpoint).toBe(1);
+    expect(w.welcome(3)).toMatchObject({ t: 'welcome', checkpoint: 1 });
+  });
+
+  test('a restart carries on from the checkpoint', () => {
+    const w = cpWorld();
+    runUntil(w, RIGHT, (e) => e.t === 'checkpoint');
+    const snap = w.snapshot();
+    expect(snap.checkpoint).toBe(1);
+    const w2 = cpWorld();
+    w2.restore(snap);
+    expect(w2.checkpoint).toBe(1);
+    // caught in the death hold: the next run starts at the checkpoint
+    runUntil(w, RIGHT, (e) => e.t === 'death');
+    const dying = w.snapshot();
+    const w3 = cpWorld();
+    w3.restore(dying);
+    expect(w3.body.x).toBe(8.5);
+    expect(w3.checkpoint).toBe(1);
+  });
+});
+
+describe('debug helpers for checkpoints', () => {
+  const CP = { index: 1, progress: (8.5 - 1.5) / 18, x: 8.5, y: 12.4 };
+  test('debugNearCheckpoint stands the blob before the flag, and debugKill kills it', () => {
+    const w = new World(LEVEL, { deaths: 0, record: null }, { checkpoints: [CP] });
+    expect(w.debugNearCheckpoint(2)).toBe(false);
+    expect(w.debugNearCheckpoint(1)).toBe(true);
+    expect(w.body.x).toBeCloseTo(7.3, 9);
+    const ev = runUntil(w, RIGHT, (e) => e.t === 'checkpoint');
+    expect(ev.at(-1)).toMatchObject({ t: 'checkpoint', index: 1 });
+    expect(w.debugKill()).toBe(true);
+    const dead = runUntil(w, STAND, (e) => e.t === 'death');
+    expect(dead.find((e) => e.t === 'death')).toMatchObject({ t: 'death', cause: 'pit', checkpoint: 1 });
   });
 });

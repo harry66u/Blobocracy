@@ -51,6 +51,8 @@ export type WinEvent = { t: 'win'; levelId: number; run: number; deaths: number;
 export type ServerEvent =
   | {
     t: 'welcome'; levelId: number; version: number; deaths: number; record: { progress: number; run: number } | null; run: number; zone: number; online: number;
+    /** The checkpoint a death sends everyone back to (0 = the start). */
+    checkpoint?: number;
     /** The level's display name. */
     name?: string;
     /** The last level, replayed after it was beaten, with its own counters. */
@@ -58,10 +60,11 @@ export type ServerEvent =
     /** Joined during a celebration: the win, and how long ago it happened. */
     celebrating?: { win: WinEvent; ageS: number };
   }
-  | { t: 'death'; run: number; cause: Cause; progress: number; deaths: number; zone: number; nearRecord: boolean }
+  | { t: 'death'; run: number; cause: Cause; progress: number; deaths: number; zone: number; nearRecord: boolean; /** The checkpoint everyone goes back to (0 = the start). */ checkpoint?: number }
+  | { t: 'checkpoint'; run: number; index: number; progress: number }
   | { t: 'zone'; run: number; index: number; name: string }
   | { t: 'record'; run: number; progress: number }
-  | { t: 'reset'; run: number }
+  | { t: 'reset'; run: number; checkpoint?: number; zone?: number }
   /** A replay clip of `run` was recorded (spec §13); watch it at /c/<id>. */
   | { t: 'clip'; id: string; kind: 'record' | 'near_miss' | 'win'; run: number }
   | WinEvent

@@ -450,7 +450,8 @@ export class HudView {
     // keep hazard names together on one line ("Big Press", "Ceiling Spikes")
     const lines = wrap(ctx, f15, `of the way, ${card.line}`.replace(/\b(Big|Ceiling) /g, '$1\u00A0'), cw - 44 * s);
     const lh = 21 * s;
-    const footer = card.countdown ? `Back to the start in ${card.countdown}` : '';
+    const where = card.checkpoint ? `the ${Math.round(card.checkpoint * 100)}% checkpoint` : 'the start';
+    const footer = card.countdown ? `Back to ${where} in ${card.countdown}` : '';
     const slotH = card.clip ? 60 * s : 0;
     const chh = 128 * s + lines.length * lh + slotH + (footer ? 30 * s : 4 * s);
     const cy0 = L.phone ? 160 * uiScale(L) : Math.max(170 * uiScale(L), L.h * 0.2);

@@ -234,6 +234,12 @@ export async function startServer(opts: ServerOptions) {
     bans,
     onBans: saveSnapshot,
     production: opts.production ?? process.env.NODE_ENV === 'production',
+    debugCheckpoint: (n) => {
+      const ok = world.debugNearCheckpoint(n);
+      if (ok) { log(`[admin] debug: the blob is just before checkpoint ${n}`); saveSnapshot(); }
+      return ok;
+    },
+    debugKill: () => world.debugKill(),
     debugWin: () => {
       const ok = world.debugNearGoal();
       if (ok) { log(`[admin] debug: the blob is just before the goal of ${levelTitle(world.level)}`); saveSnapshot(); }

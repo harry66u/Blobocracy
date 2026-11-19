@@ -6,7 +6,7 @@ import type { WinEvent } from '@blobocracy/shared';
 import { BANNER_S, DEATH_CARD_AT, DEATH_COUNTER_AT, DEATH_TOTAL_S, LEVELUP_S, deathFx, deathLine, winFx, winLines } from './moments.ts';
 import type { SceneBanner, SceneDeathCard } from './render/scene.ts';
 
-export interface DeathEvent { run: number; cause: string; progress: number; deaths: number; nearRecord: boolean }
+export interface DeathEvent { run: number; cause: string; progress: number; deaths: number; nearRecord: boolean; /** Progress of the checkpoint everyone goes back to (absent or 0 = the start). */ checkpointProgress?: number }
 export type Record = { progress: number; run: number } | null;
 
 /** Below this progress, passing the record is not a moment (the very first runs). */
@@ -115,6 +115,14 @@ export class Director {
     this.banner = null; // the death card takes the stage
   }
 
+  /** The blob reached a checkpoint: a short banner (it never interrupts a death card or a win). */
+  onCheckpoint(index: number, progress: number, now: number): void {
+    if (this.death || this.win) return;
+    const pct = Math.round(progress * 100);
+    this.banner = { id: ++this.bannerId, index: -1, name: `${pct}% of the way`, age: 0, at: now, label: 'Checkpoint!', life: 2.4 };
+    this.hooks.announce?.(`Checkpoint ${index}: ${pct}% of the way. Deaths now send everyone back here.`);
+  }
+
   onRecord(e: { run: number; progress: number }): void {
     this.record = { run: e.run, progress: e.progress };
   }
@@ -186,14 +194,14 @@ export class Director {
     }
     if (!d) this.shownDeaths = this.deaths;
     const card: SceneDeathCard | null = d && dt >= DEATH_CARD_AT
-      ? { run: d.run, progress: d.progress, line: d.line, nearRecord: d.nearRecord, countdown: Math.max(1, Math.ceil(DEATH_TOTAL_S - dt)) }
+      ? { run: d.run, progress: d.progress, line: d.line, nearRecord: d.nearRecord, ...(d.checkpointProgress ? { checkpoint: d.checkpointProgress } : {}), countdown: Math.max(1, Math.ceil(DEATH_TOTAL_S - dt)) }
       : null;
 
     let banner: SceneBanner | null = null;
     if (this.banner) {
       const age = now - this.banner.at;
-      if (age > BANNER_S) this.banner = null;
-      else banner = { id: this.banner.id, index: this.banner.index, name: this.banner.name, age };
+      if (age > (this.banner.life ?? BANNER_S)) this.banner = null;
+      else banner = { id: this.banner.id, index: this.banner.index, name: this.banner.name, age, ...(this.banner.label ? { label: this.banner.label } : {}), ...(this.banner.life ? { life: this.banner.life } : {}) };
     }
 
     const beating = this.beatenAt !== null && this.chasing !== null && !d;

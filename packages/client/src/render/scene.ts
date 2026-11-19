@@ -97,7 +97,9 @@ export interface SceneDeathCard {
   /** Second half of the sentence, e.g. "then the Big Press flattened it." */
   line: string;
   nearRecord: boolean;
-  /** Seconds until everyone goes back to the start (shown as "Back to the start in 3"). */
+  /** Progress (0..1) of the checkpoint everyone goes back to; absent means the start. */
+  checkpoint?: number;
+  /** Seconds until everyone goes back to the start or the checkpoint (shown as "Back to the start in 3"). */
   countdown?: number;
   /** A clip of this run exists: the card makes room for a "Share the clip" button (an HTML link placed by main.ts). */
   clip?: boolean;
@@ -161,6 +163,8 @@ export interface Scene {
   /** Crumble tiles touched this run: they shake for 0.5 s, then break apart and are gone. */
   crumbles: SceneCrumble[];
   fx?: SceneFx;
+  /** The level's checkpoints standing in the world: world x, the floor row, whether the blob has reached it, and its label ("40%"). */
+  checkpoints?: { x: number; row: number; reached: boolean; label: string }[];
   /** The win celebration, or null/absent. */
   win?: SceneWin | null;
 }

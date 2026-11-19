@@ -9,7 +9,7 @@ import { DynamicTiles } from './dyntiles.ts';
 import { chompCameraShift, drawChomp, drawEntitiesBack, drawEntitiesFront, solidOf, type EntityDrawCtx } from './entities.ts';
 import { CELEBRATE_S } from '@blobocracy/shared';
 import { winFx } from '../moments.ts';
-import { Confetti, drawBanner, drawOverlays, drawRecordFlag } from './fx.ts';
+import { Confetti, drawBanner, drawCheckpointFlag, drawOverlays, drawRecordFlag } from './fx.ts';
 import { HudView, uiScale } from './hud.ts';
 import { LevelLayer } from './level.ts';
 import { BLOB, HAZARD, ONLINE, SWEAT } from './palette.ts';
@@ -122,6 +122,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, layout: Layout, cam: 
   const sy = (y: number) => (y - camY) * T;
   // the record this run is chasing stands in the world as a flag (it moves only after a death)
   if (fx?.recordFlag && !win) drawRecordFlag(ctx, T, sx, sy, scene.level, fx.recordFlag.x, fx.recordFlag.label, wt, L.w);
+  for (const c of scene.checkpoints ?? []) drawCheckpointFlag(ctx, T, sx, sy, c.x, c.row, c.reached, c.label, wt, L.w);
   // the golden crown floats over the goal (until the winner wears it)
   drawGoalCrown(ctx, T, sx, sy, scene.level, wt, L.w, { taken: (b.crown ?? 0) > 0, glow: wf?.glow ?? 0 });
 

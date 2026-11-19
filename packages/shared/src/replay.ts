@@ -247,16 +247,19 @@ export function isServerEvent(v: unknown): v is ServerEvent {
     case 'welcome':
       return isCount(e.levelId) && isCount(e.version) && isCount(e.deaths) && isRecord(e.record) && isCount(e.run) && isCount(e.zone) && isCount(e.online)
         && (e.name === undefined || isName(e.name)) && (e.encore === undefined || typeof e.encore === 'boolean')
-        && (e.celebrating === undefined || isCelebrating(e.celebrating));
+        && (e.celebrating === undefined || isCelebrating(e.celebrating))
+        && (e.checkpoint === undefined || isCount(e.checkpoint));
     case 'death':
       return isCount(e.run) && typeof e.cause === 'string' && CAUSES.includes(e.cause) && isFrac(e.progress) && isCount(e.deaths)
-        && isCount(e.zone) && typeof e.nearRecord === 'boolean';
+        && isCount(e.zone) && typeof e.nearRecord === 'boolean' && (e.checkpoint === undefined || isCount(e.checkpoint));
     case 'zone':
       return isCount(e.run) && isCount(e.index) && typeof e.name === 'string' && e.name.length <= 80;
     case 'record':
       return isCount(e.run) && isFrac(e.progress);
     case 'reset':
-      return isCount(e.run);
+      return isCount(e.run) && (e.checkpoint === undefined || isCount(e.checkpoint)) && (e.zone === undefined || isCount(e.zone));
+    case 'checkpoint':
+      return isCount(e.run) && isCount(e.index) && isFrac(e.progress);
     case 'clip':
       return isClipId(e.id) && KINDS.includes(e.kind as ReplayKind) && isCount(e.run);
     case 'win':
@@ -350,7 +353,7 @@ export class ReplayRecorder {
         break;
       case 'reset':
         s.run = e.run;
-        s.zone = 0;
+        s.zone = e.zone ?? 0;
         break;
       case 'zone':
         s.zone = Math.max(s.zone, e.index);

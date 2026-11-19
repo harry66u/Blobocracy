@@ -4,7 +4,7 @@
 // the Director and the CameraRig; sound comes from the synthesized GameAudio module.
 import { createGameAudio } from './audio/index.ts';
 import './fonts.css';
-import { progressOf, zoneAt, type ServerEvent } from '@blobocracy/shared';
+import { checkpointsOf, progressOf, startOf, zoneAt, type ServerEvent } from '@blobocracy/shared';
 import { CameraRig } from './camera.ts';
 import { Director } from './director.ts';
 import { connect } from './net.ts';
@@ -69,6 +69,8 @@ let deathCause: string | null = null;
 let cardRun: number | null = null;
 /** Progress the marker slides back from during the swoop. */
 let swoopFromProgress = 0;
+/** The last checkpoint the blob reached (0 = none): deaths send everyone back to it. */
+let checkpoint = 0;
 
 function onEvent(e: ServerEvent): void {
   const now = performance.now() / 1000;
@@ -76,6 +78,7 @@ function onEvent(e: ServerEvent): void {
     case 'welcome':
       if (useLevel(e.levelId, e.encore ?? false) && !levelUp.ready) audio.setZone(0);
       director.welcome(e);
+      checkpoint = e.checkpoint ?? 0;
       deathCause = null;
       cardRun = null;
       if (loadingDeathsEl) loadingDeathsEl.textContent = `${e.deaths.toLocaleString('en-US')} deaths so far`;
@@ -92,12 +95,18 @@ function onEvent(e: ServerEvent): void {
       const old = lv;
       levelUp.capture(view.ctx.canvas, encore ? `Encore: ${old.name}` : `Level ${old.level.id}: ${old.name}`);
       useLevel(e.levelId, e.encore);
+      checkpoint = 0;
       director.onLevel(e, now);
       audio.levelUp();
       break;
     }
+    case 'checkpoint':
+      checkpoint = e.index;
+      director.onCheckpoint(e.index, e.progress, now);
+      audio.cheer('zone');
+      break;
     case 'death':
-      director.onDeath(e, now);
+      director.onDeath({ ...e, checkpointProgress: e.checkpoint ? checkpointsOf(level)[e.checkpoint - 1]?.progress : undefined }, now);
       deathCause = e.cause;
       cardRun = e.run;
       if (!reduced) rig.kick(DEATH_SHAKE.amp, DEATH_SHAKE.dur);
@@ -108,14 +117,16 @@ function onEvent(e: ServerEvent): void {
       director.onRecord(e);
       break;
     case 'reset': {
+      checkpoint = e.checkpoint ?? 0;
+      const startX = startOf(level, checkpoint).x;
       swoopFromProgress = pos ? progressOf(level, pos.x) : 0;
       director.onReset(e.run, now);
       deathCause = null;
       cardRun = null;
       // fly the camera back to the start instead of cutting
-      const from = pos ? pos.x : level.spawn.x;
-      pos = null; // the blob itself snaps to the start
-      rig.swoop(swoopDuration(from - level.spawn.x, reduced), reduced);
+      const from = pos ? pos.x : startX;
+      pos = null; // the blob itself snaps to the start (or the checkpoint)
+      rig.swoop(swoopDuration(from - startX, reduced), reduced);
       audio.resetToStart(); // the music fades back in
       break;
     }
@@ -238,6 +249,7 @@ function frame(): void {
     you: { dir: (bits & 1) && !(bits & 2) ? -1 : (bits & 2) && !(bits & 1) ? 1 : 0, jump: (bits & 4) !== 0 },
     director: d,
     showCard: cardRun !== null,
+    checkpoint,
     swoopK, swoopFade: rig.swoopFade, viewCenterX, swoopFromProgress,
   });
   scene.deathCard = withClip(scene.deathCard, clips);

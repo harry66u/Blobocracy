@@ -8,6 +8,7 @@ export * from './protocol';
 export * from './levels/index';
 export * from './pow';
 export * from './link';
+export * from './checkpoints';
 export * from './stats';
 export * from './replay';
 export * from './words';

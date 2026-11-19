@@ -29,6 +29,8 @@ function tokenOk(want: string, header: string): boolean {
  *   POST /admin/unban {cidr}
  *   POST /admin/budget {monthlyUsd} raise (or lower) the monthly budget live
  *   POST /admin/reset-flags        clear every shadow-ban flag
+ *   POST /admin/debug/checkpoint   dev only: {"n": 1..4} put the blob just before that checkpoint's flag
+ *   POST /admin/debug/kill         dev only: drop the blob into the pit
  *   POST /admin/debug/win          dev only: put the blob just before the goal (refused when NODE_ENV=production)
  */
 export function createAdmin(ctx: {
@@ -44,6 +46,8 @@ export function createAdmin(ctx: {
   production?: boolean;
   /** Puts the blob just before the current level's goal; false when it can't right now (dying, celebrating). */
   debugWin?: () => boolean;
+  debugCheckpoint?: (n: number) => boolean;
+  debugKill?: () => boolean;
 }) {
   const bans = ctx.bans ?? new Set<string>();
   const pushBans = () => ctx.control({ c: 'bans', cidrs: [...bans] });
@@ -83,6 +87,12 @@ export function createAdmin(ctx: {
         return ctx.debugWin()
           ? { status: 200, body: { ok: true, hint: 'the blob is just before the goal: hold right to win' } }
           : { status: 409, body: { error: 'not now: the blob is dying or already celebrating' } };
+      }
+      case 'POST /admin/debug/checkpoint':
+      case 'POST /admin/debug/kill': {
+        if (ctx.production || !ctx.debugCheckpoint || !ctx.debugKill) return { status: 403, body: { error: 'debug actions are off in production' } };
+        const ok = route.endsWith('/kill') ? ctx.debugKill() : ctx.debugCheckpoint(Math.trunc(Number(body.n)));
+        return ok ? { status: 200, body: { ok: true } } : { status: 409, body: { error: 'not now (dying or celebrating) or no such checkpoint' } };
       }
       case 'POST /admin/reset-flags':
         ctx.control({ c: 'resetFlags' });

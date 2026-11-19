@@ -1,7 +1,7 @@
 import {
   CELEBRATE_S, DEATH_FREEZE_S, DEATH_HOLD_S, PHYS, TICK_HZ,
-  blend, createBody, createDynamics, levelTitle, stepBody, progressOf, trackId, zoneAt,
-  type BlendOut, type Body, type Dynamics, type Level, type Phase, type ServerEvent, type VoteCounts, type WinEvent,
+  blend, checkpointsOf, createBody, createBodyAt, createDynamics, levelTitle, stepBody, progressOf, trackId, zoneAt,
+  type BlendOut, type Body, type Checkpoint, type Dynamics, type Level, type Phase, type ServerEvent, type VoteCounts, type WinEvent,
 } from '@blobocracy/shared';
 
 export interface WorldInit {
@@ -19,6 +19,8 @@ export interface WorldOptions {
   encore?: boolean;
   /** How long the celebration lasts (default CELEBRATE_S; shorter in tests). */
   celebrateS?: number;
+  /** Checkpoints to use instead of the level's own (tests). */
+  checkpoints?: readonly Checkpoint[];
 }
 
 /** Everything needed to carry on the run in progress after a restart (spec §9 `live:snapshot`). */
@@ -32,6 +34,8 @@ export interface WorldSnapshot {
   body: Body;
   dyn: { t: number; crumbles: [number, number][]; chompStart: number | null };
   maxProgress: number;
+  /** The last checkpoint reached (older snapshots: none). */
+  checkpoint?: number;
   zone: number;
   /** The level being played and whether it is an encore (older snapshots: the boot level). */
   levelId?: number;
@@ -82,6 +86,9 @@ export class World {
   record: { progress: number; run: number } | null;
   maxProgress = 0;
   zone = 0;
+  /** The last checkpoint the blob reached this level (0 = none): deaths send everyone back to it. */
+  checkpoint = 0;
+  private readonly cpOverride: readonly Checkpoint[] | undefined;
   private dyingLeft = 0;
   private celebrateLeft = 0;
   private readonly celebrateTicks: number;
@@ -93,12 +100,15 @@ export class World {
     this.level = level;
     this.levels = opts.levels?.length ? opts.levels : [level];
     this.encore = opts.encore ?? false;
+    this.cpOverride = opts.checkpoints;
     this.celebrateTicks = Math.max(1, Math.round((opts.celebrateS ?? CELEBRATE_S) * TICK_HZ));
     this.deaths = init.deaths;
     this.run = nextRunOf(init);
     this.record = init.record;
     this.body = createBody(level);
   }
+
+  private get checkpoints(): readonly Checkpoint[] { return this.cpOverride ?? checkpointsOf(this.level); }
 
   /** Where this level's counters, runs and hall of fame entry live. */
   get track(): number { return trackId(this.level.id, this.encore); }
@@ -152,7 +162,16 @@ export class World {
     }
 
     if (cause) this.die(cause, events);
-    else if (this.body.x >= this.level.goalX) this.beat(events);
+    else {
+      // reaching a checkpoint alive (a step that kills never counts)
+      const cps = this.checkpoints;
+      while (this.checkpoint < cps.length && this.body.x >= cps[this.checkpoint]!.x) {
+        const c = cps[this.checkpoint]!;
+        this.checkpoint = c.index;
+        events.push({ t: 'checkpoint', run: this.run, index: c.index, progress: c.progress });
+      }
+      if (this.body.x >= this.level.goalX) this.beat(events);
+    }
     return events;
   }
 
@@ -161,6 +180,7 @@ export class World {
     return {
       t: 'welcome', levelId: this.level.id, version: this.level.version, name: levelTitle(this.level), encore: this.encore,
       deaths: this.deaths, record: this.record, run: this.run, zone: this.zone, online,
+      ...(this.checkpoint > 0 ? { checkpoint: this.checkpoint } : {}),
       ...(win ? { celebrating: { win, ageS: (this.celebrateTicks - this.celebrateLeft) / TICK_HZ } } : {}),
     };
   }
@@ -181,12 +201,32 @@ export class World {
     return true;
   }
 
+  /**
+   * Dev only (admin debug): puts the blob on checkpoint `n`'s pad just before its flag (hold right
+   * to reach it). Refused during the death hold and the celebration, or for a checkpoint that does not exist.
+   */
+  debugNearCheckpoint(n: number): boolean {
+    const cp = this.checkpoints[n - 1];
+    if (!cp || this.phase === 'dying' || this.phase === 'celebrating') return false;
+    this.body = { ...createBodyAt(this.level, cp.x - 1.2, cp.y), facing: 1 };
+    this.zone = zoneAt(this.level, cp.x).index;
+    this.maxProgress = Math.max(this.maxProgress, progressOf(this.level, cp.x - 1.2));
+    return true;
+  }
+
+  /** Dev only (admin debug): drops the blob into the pit, as if the crowd walked it off. */
+  debugKill(): boolean {
+    if (this.phase === 'dying' || this.phase === 'celebrating') return false;
+    this.body.y = this.level.height;
+    return true;
+  }
+
   snapshot(): WorldSnapshot {
     return {
       tick: this.tick, run: this.run, runTick: this.runTick, deaths: this.deaths, record: this.record ? { ...this.record } : null,
       phase: this.phase, body: { ...this.body },
       dyn: { t: this.dyn.t, crumbles: [...this.dyn.crumbles], chompStart: this.dyn.chompStart },
-      maxProgress: this.maxProgress, zone: this.zone,
+      maxProgress: this.maxProgress, zone: this.zone, checkpoint: this.checkpoint,
       levelId: this.level.id, encore: this.encore,
       celebrateLeft: this.celebrateLeft, win: this.win,
       counters: [...this.saved].map(([k, c]) => [k, copyInit(c)]),
@@ -209,6 +249,7 @@ export class World {
     this.dyingLeft = 0;
     this.celebrateLeft = 0;
     this.winEvent = null;
+    this.checkpoint = Math.min(s.checkpoint ?? 0, this.checkpoints.length);
     if (s.phase === 'dying') {
       this.run = s.run + 1;
       this.freshRun();
@@ -234,7 +275,7 @@ export class World {
     const nearRecord = this.record !== null && this.record.progress >= MIN_RECORD_FOR_NEAR_MISS
       && progress >= this.record.progress - NEAR_RECORD;
     this.deaths++;
-    events.push({ t: 'death', run: this.run, cause, progress, deaths: this.deaths, zone: this.zone, nearRecord });
+    events.push({ t: 'death', run: this.run, cause, progress, deaths: this.deaths, zone: this.zone, nearRecord, checkpoint: this.checkpoint });
     if (this.record === null || progress > this.record.progress) {
       this.record = { progress, run: this.run };
       events.push({ t: 'record', run: this.run, progress });
@@ -287,15 +328,18 @@ export class World {
     this.run = nextRunOf(c);
     this.winEvent = null;
     this.celebrateLeft = 0;
+    this.checkpoint = 0;
     this.freshRun();
     events.push({ t: 'level', levelId: this.level.id, version: this.level.version, name: levelTitle(this.level), encore: this.encore });
   }
 
   private freshRun(): void {
-    this.body = createBody(this.level);
+    // a new run starts at the last checkpoint reached (the start when none)
+    const cp = this.checkpoint > 0 ? this.checkpoints[this.checkpoint - 1] : undefined;
+    this.body = cp ? createBodyAt(this.level, cp.x, cp.y) : createBody(this.level);
     this.dyn = createDynamics();
-    this.maxProgress = 0;
-    this.zone = 0;
+    this.maxProgress = cp ? cp.progress : 0;
+    this.zone = cp ? zoneAt(this.level, cp.x).index : 0;
     this.runTick = 0;
     this.phase = 'running';
     this.lastBlend = { ...IDLE_BLEND };
@@ -304,6 +348,6 @@ export class World {
   private reset(events: ServerEvent[]): void {
     this.run++;
     this.freshRun();
-    events.push({ t: 'reset', run: this.run });
+    events.push({ t: 'reset', run: this.run, checkpoint: this.checkpoint, zone: this.zone });
   }
 }
