@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { encodeState, type ServerEvent, type StateFrame } from '../src/protocol';
 import {
-  MAX_REPLAY_FRAMES, REPLAY_MAGIC, ReplayRecorder, decodeReplay, encodeReplay, frameTick, packReplay, replayDuration, unpackReplay, type Replay,
+  MAX_REPLAY_FRAMES, REPLAY_MAGIC, isServerEvent, ReplayRecorder, decodeReplay, encodeReplay, frameTick, packReplay, replayDuration, unpackReplay, type Replay,
 } from '../src/replay';
 
 function frame(tick: number, over: Partial<StateFrame> = {}): Uint8Array<ArrayBuffer> {
@@ -182,5 +182,25 @@ describe('ReplayRecorder', () => {
     const want = [...f];
     f.fill(0);
     expect([...rec.snapshot('record', 30)!.frames[0]!]).toEqual(want);
+  });
+});
+
+describe('names events', () => {
+  test('a names event is a valid event, and malformed ones are not', () => {
+    expect(isServerEvent({ t: 'names', names: [[3, 'Sleepy Waffle'], [10, 'Ana']] })).toBe(true);
+    expect(isServerEvent({ t: 'names', names: [] })).toBe(true);
+    expect(isServerEvent({ t: 'names', names: [[3, 5]] })).toBe(false);
+    expect(isServerEvent({ t: 'names', names: [[-1, 'x']] })).toBe(false);
+    expect(isServerEvent({ t: 'names', names: 'x' })).toBe(false);
+  });
+});
+
+describe('recorder and names', () => {
+  test('names events never end up inside a clip', () => {
+    const rec = new ReplayRecorder({ levelId: 1, levelVersion: 1 });
+    rec.push(frame(1), [{ t: 'welcome', levelId: 1, version: 1, deaths: 0, record: null, run: 1, zone: 0, online: 3 }]);
+    rec.push(frame(4), [{ t: 'names', names: [[1, 'Ana']] }, { t: 'zone', run: 1, index: 1, name: 'Pointy Meadow' }]);
+    const clip = rec.snapshot('record', 5)!;
+    expect(clip.events.map((e) => e.event.t)).toEqual(['welcome', 'zone']);
   });
 });

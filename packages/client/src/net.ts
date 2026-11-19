@@ -64,7 +64,7 @@ async function fetchToken(httpBase: string): Promise<{ token: string; exp: numbe
  * While the relay cannot reach the sim it says so ({t:'sim', up:false}); `connected` is then
  * false (the page shows "Reconnecting to the blob…") but the socket stays open.
  */
-export function connect(url: string, onEvent: (e: ServerEvent) => void) {
+export function connect(url: string, onEvent: (e: ServerEvent) => void, onNameReply: (r: { ok: boolean; name?: string }) => void = () => {}) {
   const state: NetState = { connected: false, latest: null, latestAt: 0, rttMs: 80, welcome: null, packed: false, idle: false };
   let ws: WebSocket | null = null;
   let backoff = BACKOFF_MIN_MS;
@@ -75,6 +75,8 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let stableTimer: ReturnType<typeof setTimeout> | undefined;
   let lastBits = 0;
+  /** The name to give the relay on every (re)connect: a new socket is a new player to it. */
+  let myName: string | null = null;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
   let lastHeard = 0;
   let token: { token: string; exp: number } | null = null;
@@ -114,6 +116,7 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
       // the backoff starts over only once this socket has proved itself
       stableTimer = setTimeout(() => { backoff = BACKOFF_MIN_MS; }, STABLE_MS);
       if (lastBits) ws!.send(encodeInput(lastBits)); // resume what the player is holding
+      if (myName) ws!.send(JSON.stringify({ c: 'name', name: myName }));
       pingTimer = setInterval(() => {
         // Phones on cellular can lose the connection without any close event; notice the silence.
         if (performance.now() - lastHeard > SILENCE_MS) { drop(); return; }
@@ -126,6 +129,7 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
         let e: ServerEvent | EdgeNotice;
         try { e = JSON.parse(m.data); } catch { return; }
         if (e.t === 'sim') { simUp = e.up; state.connected = e.up; return; }
+        if (e.t === 'name') { onNameReply(e); return; }
         if (e.t === 'welcome') state.welcome = e;
         onEvent(e);
         return;
@@ -180,6 +184,11 @@ export function connect(url: string, onEvent: (e: ServerEvent) => void) {
 
   return {
     state,
+    /** Tells the relay the name this player chose (null: none). It is sent again after any reconnect. */
+    sendName(name: string | null) {
+      myName = name;
+      if (name && ws?.readyState === 1) ws.send(JSON.stringify({ c: 'name', name }));
+    },
     sendInput(bits: number) {
       lastBits = bits;
       if (bits && paused && state.idle) resume();

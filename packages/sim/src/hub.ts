@@ -130,6 +130,8 @@ export function startHub(o: HubOptions): Promise<Relay & {
         r.info.claimsAlwaysOn = c.alwaysOn === true;
         r.info.hourlyUsd = typeof c.hourlyUsd === 'number' && Number.isFinite(c.hourlyUsd) && c.hourlyUsd >= 0 ? c.hourlyUsd : undefined;
         o.onRelaysChanged();
+      } else if (c.c === 'names') {
+        if (typeof c.names === 'object' && c.names !== null && !Array.isArray(c.names)) o.voters.setRelayNames(r.info.id, c.names);
       } else if (c.c === 'stats') {
         r.info.stats = typeof c.stats === 'object' && c.stats !== null && !Array.isArray(c.stats) ? c.stats : null;
       } else if (c.c === 'admin') {

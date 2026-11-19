@@ -51,6 +51,7 @@
 #   VIRTUAL_PLAYERS             in-process fake crowd (0 in production)
 # Edge:
 #   SIM_URL                     ws://sim.process.<app>.internal:8081/relay
+#   NAME_BLOCKLIST              (edge) extra words player names may not contain, comma separated; unset = the built-in list only
 #   POW_DIFFICULTY              leading zero bits of the session proof of work: 14 ≈ 50-150 ms on a phone
 #   SESSION_TTL_S               session token lifetime (600)
 #   IP_VOTE_CAP                 all sockets from one IP (IPv6: one /64) weigh at most this many votes (4); IPv6 also

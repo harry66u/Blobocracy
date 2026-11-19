@@ -9,6 +9,7 @@ export * from './levels/index';
 export * from './pow';
 export * from './link';
 export * from './checkpoints';
+export * from './names';
 export * from './stats';
 export * from './replay';
 export * from './words';

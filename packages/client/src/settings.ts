@@ -3,6 +3,7 @@
 // The panel is a modal dialog: keyboard operable, focus-trapped, Escape closes.
 import type { Layout } from './layout.ts';
 import { hudButtons } from './render/hud.ts';
+import { MAX_NAME_LEN } from '@blobocracy/shared';
 import { BLOB, CREAM, CREAM_HI, HAZARD, INK } from './render/palette.ts';
 
 const REDUCED_KEY = 'blobocracy.reducedMotion';
@@ -32,6 +33,8 @@ export interface HudControlsOpts {
   setMuted(m: boolean): void;
   reduced(): boolean;
   setReduced(on: boolean): void;
+  /** The player's name (shown on their dot to everyone): the current one, and a request to change it (the relay checks it). */
+  name?: { current(): string | null; submit(name: string): void };
 }
 
 export interface HudControls {
@@ -42,6 +45,8 @@ export interface HudControls {
   place(): void;
   /** Refresh labels after muted/reduced changed elsewhere. */
   sync(): void;
+  /** The relay's answer to a name the player submitted. */
+  nameReply(ok: boolean, name?: string): void;
 }
 
 const STYLE = `
@@ -67,6 +72,17 @@ body.bl-reduced .bl-panel{animation:bl-fade .2s ease-out;transform:none}
 .bl-switch[aria-checked=true]::after{transform:translateX(24px)}
 body.bl-reduced .bl-switch::after{transition:none}
 .bl-switch:focus-visible,.bl-close:focus-visible{outline:3px solid ${HAZARD};outline-offset:3px}
+.bl-modal.bl-center{align-items:center;justify-content:center;padding:24px}
+.bl-nameform{display:flex;gap:8px;margin-top:10px}
+.bl-nameform input{flex:1;min-width:0;box-sizing:border-box;font:700 16px 'Atkinson Hyperlegible Next',system-ui,sans-serif;padding:9px 11px;border:3px solid ${INK};border-radius:13px;background:${CREAM_HI};color:${INK}}
+.bl-nameform input:focus-visible{outline:3px solid ${HAZARD};outline-offset:2px}
+.bl-btn{flex:none;font:800 15px 'Atkinson Hyperlegible Next',system-ui,sans-serif;padding:0 16px;min-height:44px;border:3px solid ${INK};border-radius:13px;background:${BLOB};color:${INK};box-shadow:0 3px 0 ${INK};cursor:pointer}
+.bl-btn:active{transform:translateY(2px);box-shadow:0 1px 0 ${INK}}
+.bl-btn:focus-visible,.bl-link:focus-visible{outline:3px solid ${HAZARD};outline-offset:3px}
+.bl-btn.bl-alt{background:${CREAM_HI}}
+.bl-link{background:none;border:0;padding:10px 4px;font:700 14.5px 'Atkinson Hyperlegible Next',system-ui,sans-serif;color:${INK};text-decoration:underline;cursor:pointer}
+.bl-msg{display:block;min-height:1.3em;margin:8px 0 0;font-weight:700;font-size:14px}
+.bl-msg.bl-bad{color:#b3261e}
 .bl-how{border-top:2px dashed rgba(42,27,61,.18);padding-top:12px;margin:0;font-weight:600;font-size:14.5px;line-height:1.5}
 .bl-how strong{font-weight:800}
 .bl-how kbd{font:800 12.5px/1 'Atkinson Hyperlegible Next',system-ui,sans-serif;display:inline-block;min-width:13px;text-align:center;padding:3px 5px 2px;border:2px solid ${INK};border-bottom-width:3.5px;border-radius:7px;background:${CREAM_HI};margin:0 1px}
@@ -107,6 +123,11 @@ export function mountHudControls(root: HTMLElement, opts: HudControlsOpts): HudC
         <div id="bl-motion-l"><b>Reduced motion</b><small>No shakes or bounces, gentle fades</small></div>
         <button type="button" class="bl-switch" role="switch" data-k="motion" aria-labelledby="bl-motion-l"></button>
       </div>
+      <div class="bl-row">
+        <div style="flex:1;min-width:0"><b id="bl-name-l">Your name</b><small id="bl-name-msg" role="status">Everyone sees it on your dot</small>
+          <form class="bl-nameform" autocomplete="off"><input id="bl-name-in" aria-labelledby="bl-name-l" maxlength="${MAX_NAME_LEN}" spellcheck="false" autocomplete="off" placeholder="Pick a name"><button type="submit" class="bl-btn">Save</button></form>
+        </div>
+      </div>
       <p class="bl-how"><strong>How to play:</strong> <kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> to move, <kbd>W</kbd>, <kbd>↑</kbd> or <kbd>Space</kbd> to jump (or the touch buttons). Hold jump longer to jump higher. Everyone online controls the same blob.</p>
     </div>`;
   root.appendChild(modal);
@@ -114,6 +135,9 @@ export function mountHudControls(root: HTMLElement, opts: HudControlsOpts): HudC
   const closeBtn = modal.querySelector('.bl-close') as HTMLButtonElement;
   const soundSw = modal.querySelector('[data-k=sound]') as HTMLButtonElement;
   const motionSw = modal.querySelector('[data-k=motion]') as HTMLButtonElement;
+  const nameForm = modal.querySelector('.bl-nameform') as HTMLFormElement;
+  const nameIn = modal.querySelector('#bl-name-in') as HTMLInputElement;
+  const nameMsg = modal.querySelector('#bl-name-msg') as HTMLElement;
   let lastFocus: HTMLElement | null = null;
 
   const sync = () => {
@@ -136,11 +160,12 @@ export function mountHudControls(root: HTMLElement, opts: HudControlsOpts): HudC
     }
   };
 
-  const focusables = () => Array.from(panel.querySelectorAll<HTMLElement>('button'));
+  const focusables = () => Array.from(panel.querySelectorAll<HTMLElement>('button, input'));
   const open = () => {
     if (!modal.hidden) return;
     lastFocus = document.activeElement as HTMLElement | null;
     sync();
+    nameIn.value = opts.name?.current() ?? '';
     modal.hidden = false;
     gearBtn.setAttribute('aria-expanded', 'true');
     soundSw.focus();
@@ -156,6 +181,14 @@ export function mountHudControls(root: HTMLElement, opts: HudControlsOpts): HudC
   soundBtn.addEventListener('click', toggleSound);
   soundSw.addEventListener('click', toggleSound);
   motionSw.addEventListener('click', () => { opts.setReduced(!opts.reduced()); sync(); });
+  if (!opts.name) nameForm.closest('.bl-row')!.remove();
+  nameForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = nameIn.value.trim();
+    if (!v || !opts.name) return;
+    nameMsg.textContent = 'Checking…';
+    opts.name.submit(v);
+  });
   gearBtn.addEventListener('click', () => (modal.hidden ? open() : close()));
   closeBtn.addEventListener('click', close);
   modal.querySelector('.bl-backdrop')!.addEventListener('click', close);
@@ -180,5 +213,83 @@ export function mountHudControls(root: HTMLElement, opts: HudControlsOpts): HudC
   window.visualViewport?.addEventListener('resize', place);
   place();
   sync();
-  return { isOpen: () => !modal.hidden, open, close, place, sync };
+  const nameReply = (ok: boolean, name?: string) => {
+    nameMsg.textContent = ok ? `You are ${name}` : 'That name is not allowed. Try another';
+    if (ok && name) nameIn.value = name;
+  };
+  return { isOpen: () => !modal.hidden, open, close, place, sync, nameReply };
+}
+
+
+export interface NamePromptOpts {
+  /** A friendly random name to offer. */
+  suggest(): string;
+  /** The player chose a name; the relay's answer comes back through `reply`. */
+  submit(name: string): void;
+  /** The player would rather stay anonymous. */
+  skip(): void;
+}
+
+/**
+ * The first-visit card: "What should we call you?" A name is optional; Escape or "Stay anonymous" skips it.
+ * Call `reply(ok)` with the relay's answer: ok closes the card, otherwise it asks for another name.
+ */
+export function mountNamePrompt(root: HTMLElement, opts: NamePromptOpts): { reply(ok: boolean): void; close(): void } {
+  const modal = document.createElement('div');
+  modal.className = 'bl-modal bl-center';
+  modal.innerHTML = `
+    <div class="bl-backdrop"></div>
+    <div class="bl-panel" role="dialog" aria-modal="true" aria-labelledby="bl-np-title" aria-describedby="bl-np-sub">
+      <h2 id="bl-np-title">What should we call you?</h2>
+      <p id="bl-np-sub" style="margin:0 0 4px;font-weight:600;font-size:15px;line-height:1.4">Everyone steering the blob sees your name on your dot. You can change it later in settings.</p>
+      <form class="bl-nameform" autocomplete="off">
+        <input id="bl-np-in" aria-label="Your name" maxlength="${MAX_NAME_LEN}" spellcheck="false" autocomplete="off">
+        <button type="submit" class="bl-btn">Join</button>
+      </form>
+      <span class="bl-msg" id="bl-np-msg" role="status"></span>
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <button type="button" class="bl-link" data-k="again">Surprise me</button>
+        <button type="button" class="bl-link" data-k="skip">Stay anonymous</button>
+      </div>
+    </div>`;
+  const style = document.createElement('style');
+  style.textContent = STYLE;
+  modal.prepend(style);
+  root.appendChild(modal);
+  const input = modal.querySelector('#bl-np-in') as HTMLInputElement;
+  const msg = modal.querySelector('#bl-np-msg') as HTMLElement;
+  input.value = opts.suggest();
+  const close = () => { modal.remove(); };
+  modal.querySelector('form')!.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = input.value.trim();
+    if (!v) { msg.textContent = 'Type a name, or stay anonymous.'; msg.className = 'bl-msg bl-bad'; return; }
+    msg.textContent = 'Checking…';
+    msg.className = 'bl-msg';
+    opts.submit(v);
+  });
+  modal.querySelector('[data-k=again]')!.addEventListener('click', () => { input.value = opts.suggest(); input.focus(); input.select(); });
+  const skip = () => { close(); opts.skip(); };
+  modal.querySelector('[data-k=skip]')!.addEventListener('click', skip);
+  modal.querySelector('.bl-backdrop')!.addEventListener('click', skip);
+  modal.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); skip(); return; }
+    if (e.key !== 'Tab') return;
+    const f = Array.from(modal.querySelectorAll<HTMLElement>('button, input'));
+    const first = f[0]!, last = f[f.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  input.focus();
+  input.select();
+  return {
+    reply(ok: boolean) {
+      if (ok) { close(); return; }
+      msg.textContent = 'That name is not allowed. Try another.';
+      msg.className = 'bl-msg bl-bad';
+      input.focus();
+      input.select();
+    },
+    close,
+  };
 }

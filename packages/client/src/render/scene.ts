@@ -27,7 +27,7 @@ export interface SceneLevel {
 /** A crumble tile stood on this run, and the run time (s) it was first touched. */
 export interface SceneCrumble { tx: number; ty: number; at: number }
 
-export interface SceneDot { slot: number; dir: -1 | 0 | 1; jump: boolean }
+export interface SceneDot { slot: number; dir: -1 | 0 | 1; jump: boolean; /** The name this player chose, when they chose one. */ name?: string }
 
 export interface SceneBlob {
   /** Center of the hitbox in tiles, y grows down. */
@@ -150,7 +150,7 @@ export interface Scene {
   /** Sampled real players. */
   dots: SceneDot[];
   /** The local player's own dot, drawn highlighted. */
-  you: { dir: -1 | 0 | 1; jump: boolean } | null;
+  you: { dir: -1 | 0 | 1; jump: boolean; /** Your own name, shown on your dot instead of "you". */ name?: string } | null;
   hud: SceneHud;
   deathCard: SceneDeathCard | null;
   /** Current sky; the renderer cross-fades between skies over about 2 s. */

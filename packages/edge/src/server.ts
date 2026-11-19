@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import uWS from 'uWebSockets.js';
 import {
   DEFAULT_LINK_SAMPLE, Reservoir, decodeClient, encodePong, encodeSummary,
-  type EdgeNotice, type ServerEvent, type SimControl,
+  MAX_NAME_MESSAGE_BYTES, NameChangeLimiter, cleanName, parseNameMessage, type EdgeNotice, type ServerEvent, type SimControl,
 } from '@blobocracy/shared';
 import { gzipSync } from 'node:zlib';
 import { ApiProxy, KNOWN_TRACKS, TokenBuckets, absolutizeMeta, canonicalApi, clipPreview, originAllowed, originOf, simHttpBase, withPreview, type ClipMetaJson } from './api';
@@ -43,6 +43,8 @@ export interface EdgeOptions {
   hourlyUsd?: number;
   reconnectMinMs?: number;
   reconnectMaxMs?: number;
+  /** Extra words player names may not contain (the NAME_BLOCKLIST setting). */
+  nameBlocklist?: string[];
   /** Abandon a sim connection attempt that has not opened after this long (default 5000). */
   connectTimeoutMs?: number;
   /** Bytes of WebSocket + TLS + TCP/IP overhead counted per message sent, for the egress estimate. */
@@ -74,12 +76,12 @@ export interface EdgeOptions {
 export const CLOSE_IDLE = 4001;
 export const CLOSE_PACKED = 4002;
 
-interface PlayerData { id: number; ip: string; ipk: string; p48: string | null; sid: string; watcher: boolean; idx: number; lastInput: number }
+interface PlayerData { id: number; ip: string; ipk: string; p48: string | null; sid: string; watcher: boolean; idx: number; lastInput: number; names: NameChangeLimiter }
 type Sock = uWS.WebSocket<PlayerData>;
 
 const SIM_DOWN = JSON.stringify({ t: 'sim', up: false } satisfies EdgeNotice);
 const SIM_UP = JSON.stringify({ t: 'sim', up: true } satisfies EdgeNotice);
-const MAX_MESSAGE_BYTES = 64;
+const MAX_MESSAGE_BYTES = MAX_NAME_MESSAGE_BYTES;
 
 /**
  * An edge relay (spec §4): serves the client and /session, holds player sockets, enforces the
@@ -108,6 +110,10 @@ export async function startEdge(o: EdgeOptions) {
 
   let policy: AdmitPolicy & { frameHz: number; sampleQuota: number } = { tier: 0, alwaysOn: true, capacity: 3000, frameHz: 20, sampleQuota: DEFAULT_LINK_SAMPLE };
   let welcomeText: string | null = null;
+  /** The latest list of who the crowd dots are (from the sim), for players who join later. */
+  let namesText: string | null = null;
+  /** The last names message sent to the sim (empty: send again, e.g. after a reconnect). */
+  let lastNamesSent = '';
   let welcome: Extract<ServerEvent, { t: 'welcome' }> | null = null;
   let resync = false;
   let lastOnline = 0;
@@ -163,7 +169,10 @@ export async function startEdge(o: EdgeOptions) {
       if (g.play) { counters.framesPlay++; publish('play', frame, true); }
       if (g.watch) { counters.framesWatch++; publish('watch', frame, true); }
     },
-    onEvent: (text) => publish('all', text, false),
+    onEvent: (text) => {
+      if (text.startsWith('{"t":"names"')) namesText = text;
+      publish('all', text, false);
+    },
     onControl: (c: SimControl) => {
       switch (c.c) {
         case 'policy':
@@ -194,7 +203,7 @@ export async function startEdge(o: EdgeOptions) {
         }
       }
     },
-    onUp: () => { resync = true; publish('all', SIM_UP, false); },
+    onUp: () => { resync = true; lastNamesSent = ''; publish('all', SIM_UP, false); },
     onDown: () => { publish('all', SIM_DOWN, false); },
   });
 
@@ -237,7 +246,7 @@ export async function startEdge(o: EdgeOptions) {
       if ((ipConns.get(ipk) ?? 0) + abuse.remoteConns(ipk) >= ipConnCap) { counters.rejected.ipCap++; res.writeStatus('429 Too Many Requests').end('too many connections from this address'); return; }
       const role = admit(policy, crowd.stats().connections);
       if (role === 'packed') { counters.rejected.packed++; res.writeStatus('503 Service Unavailable').end('packed'); return; }
-      res.upgrade<PlayerData>({ id: nextId++, ip, ipk, p48: prefixKey(ip, 48), sid: session.sid, watcher: role === 'watcher', idx: -1, lastInput: Date.now() }, key, proto, ext, context);
+      res.upgrade<PlayerData>({ id: nextId++, ip, ipk, p48: prefixKey(ip, 48), sid: session.sid, watcher: role === 'watcher', idx: -1, lastInput: Date.now(), names: new NameChangeLimiter() }, key, proto, ext, context);
     },
     open: (ws) => {
       const d = ws.getUserData();
@@ -255,10 +264,19 @@ export async function startEdge(o: EdgeOptions) {
       ws.subscribe(d.watcher ? 'watch' : 'play');
       ws.subscribe('all');
       if (welcomeText) ws.send(welcomeText, false);
+      if (namesText) ws.send(namesText, false);
       if (!link.up) ws.send(SIM_DOWN, false);
     },
     message: (ws, msg, isBinary) => {
-      if (!isBinary) return;
+      if (!isBinary) {
+        const n = parseNameMessage(Buffer.from(msg).toString());
+        if (!n) return;
+        const d = ws.getUserData();
+        const clean = d.names.allow(Date.now()) ? cleanName(n.name, o.nameBlocklist ?? []) : null;
+        if (clean !== null) crowd.setName(d.id, clean);
+        ws.send(JSON.stringify(clean !== null ? { t: 'name', ok: true, name: clean } satisfies EdgeNotice : { t: 'name', ok: false } satisfies EdgeNotice), false);
+        return;
+      }
       const m = decodeClient(msg);
       if (!m) return;
       if (m.type === 'input') { const d = ws.getUserData(); d.lastInput = Date.now(); crowd.input(d.id, m.bits, d.lastInput); return; }
@@ -422,6 +440,13 @@ export async function startEdge(o: EdgeOptions) {
   });
   app.any('/*', (res) => { res.writeStatus('404 Not Found').end('not found'); });
 
+  // The names of the players holding crowd dots go to the sim when they change (twice a second at most).
+  const namesTimer = setInterval(() => {
+    if (!link.up) return;
+    const text = JSON.stringify({ c: 'names', names: crowd.sampleNames() });
+    if (text !== lastNamesSent && link.send(text)) lastNamesSent = text;
+  }, 500);
+
   // One summary per sim tick at most, sent only when it changed (plus a 1 s keepalive with the byte count).
   let seq = 0, lastSent = 0, lastKey: Buffer | null = null, pendingOldest = 0;
   const summaryTimer = setInterval(() => {
@@ -491,7 +516,7 @@ export async function startEdge(o: EdgeOptions) {
     ipConns: () => new Map(ipConns),
     stats,
     stop: async () => {
-      clearInterval(summaryTimer); clearInterval(loadTimer); clearInterval(statsTimer); clearInterval(idleTimer);
+      clearInterval(summaryTimer); clearInterval(namesTimer); clearInterval(loadTimer); clearInterval(statsTimer); clearInterval(idleTimer);
       link.close();
       abuse.close();
       for (const p of adminPending.values()) clearTimeout(p.timer);

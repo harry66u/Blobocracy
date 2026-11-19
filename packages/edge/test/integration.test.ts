@@ -56,7 +56,7 @@ function client(port: number, tok: string | null, ip = '198.51.100.1', origin?: 
     ws.onmessage = (m) => {
       if (typeof m.data === 'string') {
         const e = JSON.parse(m.data);
-        (e.t === 'sim' ? c.notices : c.events).push(e);
+        (e.t === 'sim' || e.t === 'name' ? c.notices : c.events).push(e);
       } else { const d = decodeServer(m.data as ArrayBuffer); if (d && 'tick' in d) c.frames.push(d); }
     };
     ws.onclose = (ev) => { c.closed = true; c.code = ev.code; c.reason = ev.reason; if (!c.opened) reject(new Error('rejected')); };
@@ -330,5 +330,57 @@ describe('sim + two edges', () => {
     expect(r.body).not.toContain('relays');
     expect(r.status).toBe(404);
     expect((await get('/api/%2e%2e/admin/stats')).status).toBe(404);
+  });
+});
+
+describe('player names through a relay', () => {
+  const NAME = (n: string) => JSON.stringify({ c: 'name', name: n });
+  const answers = (c: Client) => c.notices.filter((n) => n.t === 'name');
+
+  test('a good name is accepted, cleaned, and then everyone sees it on the player\'s dot', async () => {
+    const s = await sim();
+    const e = await edge(s);
+    const a = await client(e.port, await token(e.port, '198.51.100.1'), '198.51.100.1');
+    const b = await client(e.port, await token(e.port, '198.51.100.2'), '198.51.100.2');
+    a.ws.send(encodeInput(IN_RIGHT)); // an active player is eligible for a dot
+    a.ws.send(NAME('  Sleepy   Waffle '));
+    await waitFor(() => answers(a).length > 0);
+    expect(answers(a)[0]).toEqual({ t: 'name', ok: true, name: 'Sleepy Waffle' });
+    const seen = await waitFor(() => b.events.find((x) => x.t === 'names' && x.names.some((n: [number, string]) => n[1] === 'Sleepy Waffle')), 6000);
+    expect(seen.names).toHaveLength(1);
+    // a player who joins later is told straight away
+    const late = await client(e.port, await token(e.port, '198.51.100.3'), '198.51.100.3');
+    await waitFor(() => late.events.find((x) => x.t === 'names' && x.names.length === 1), 3000);
+  });
+
+  test('a rude or empty name is refused and never shown', async () => {
+    const s = await sim();
+    const e = await edge(s);
+    const a = await client(e.port, await token(e.port), '198.51.100.1');
+    a.ws.send(encodeInput(IN_RIGHT));
+    a.ws.send(NAME('sh1t head'));
+    a.ws.send(NAME('   '));
+    await waitFor(() => answers(a).length === 2);
+    expect(answers(a).map((n) => n.ok)).toEqual([false, false]);
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(a.events.filter((x) => x.t === 'names' && x.names.length > 0)).toEqual([]);
+  });
+
+  test('changing a name too often is refused', async () => {
+    const s = await sim();
+    const e = await edge(s);
+    const a = await client(e.port, await token(e.port), '198.51.100.1');
+    for (let i = 0; i < 6; i++) a.ws.send(NAME(`Name ${i}`));
+    await waitFor(() => answers(a).length === 6);
+    expect(answers(a).map((n) => n.ok)).toEqual([true, true, true, true, false, false]);
+  });
+
+  test('extra blocked words from the settings apply', async () => {
+    const s = await sim();
+    const e = await edge(s, { nameBlocklist: ['flarb'] });
+    const a = await client(e.port, await token(e.port), '198.51.100.1');
+    a.ws.send(NAME('Mr Flarb'));
+    await waitFor(() => answers(a).length === 1);
+    expect(answers(a)[0].ok).toBe(false);
   });
 });

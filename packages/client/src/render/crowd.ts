@@ -2,12 +2,14 @@
 // the blob that depends on what that player is pressing (left-pushers settle on the
 // left, right-pushers on the right, jumpers higher), eases toward it, and leans with a
 // tail toward its input so the swarm visibly fights over left versus right.
-import { BLOB, DOT, FONT_TEXT, INK } from './palette.ts';
+import { BLOB, CREAM_HI, DOT, FONT_TEXT, INK } from './palette.ts';
 import type { SceneDot } from './scene.ts';
 
 const SLOTS = 256;
 const OWN = SLOTS; // extra index for the local player's dot
 const N = SLOTS + 1;
+/** At most this many names are drawn at once (the nearest dots first), so the crowd never turns into a wall of text. */
+const MAX_LABELS = 12;
 
 function rng(seed: number): () => number {
   let a = seed >>> 0;
@@ -58,6 +60,7 @@ export class CrowdView {
   private readonly ly = new Float32Array(N);
   private readonly tail = new Float32Array(N); // eased tail length factor
   private readonly alpha = new Float32Array(N);
+  private readonly names: (string | undefined)[] = new Array(N).fill(undefined);
   private readonly seen = new Uint32Array(N);
   private readonly sx = new Float32Array(N); // screen positions for this frame
   private readonly sy = new Float32Array(N);
@@ -84,8 +87,9 @@ export class CrowdView {
     this.g2[OWN] = -0.35;
   }
 
-  update(dots: readonly SceneDot[], you: { dir: -1 | 0 | 1; jump: boolean } | null, dead: boolean, dt: number, timeS: number): void {
+  update(dots: readonly SceneDot[], you: { dir: -1 | 0 | 1; jump: boolean; name?: string } | null, dead: boolean, dt: number, timeS: number): void {
     const prev = this.frame;
+    this.names.fill(undefined);
     this.frame++;
     this.nActive = 0;
     const kPos = 1 - Math.exp(-dt * 3.2);
@@ -96,11 +100,13 @@ export class CrowdView {
       const i = ((d.slot % SLOTS) + SLOTS) % SLOTS;
       this.step(i, d.dir, d.jump, dead, this.seen[i] !== prev, kPos, kLean, fade, timeS);
       this.seen[i] = this.frame;
+      this.names[i] = d.name;
       if (this.nActive < SLOTS) this.active[this.nActive++] = i;
     }
     if (you) {
       this.step(OWN, you.dir, you.jump, dead, this.seen[OWN] !== prev, kPos, kLean, fade, timeS);
       this.seen[OWN] = this.frame;
+      this.names[OWN] = you.name;
     }
   }
 
@@ -174,6 +180,40 @@ export class CrowdView {
       }
     }
     ctx.globalAlpha = 1;
+    this.drawNames(ctx, T, phone, bx, by, h, rr);
+  }
+
+  /** Names of the nearest named dots, small and outlined so they read over anything; labels never overlap. */
+  private drawNames(ctx: CanvasRenderingContext2D, T: number, phone: boolean, bx: number, by: number, h: number, rr: number): void {
+    const named: number[] = [];
+    for (let j = 0; j < this.nActive; j++) {
+      const i = this.active[j]!;
+      if (this.names[i] && this.alpha[i]! >= 1 && this.sy[i]! > 0 && this.sy[i]! < h) named.push(i);
+    }
+    if (named.length === 0) return;
+    named.sort((a, b) => Math.hypot(this.sx[a]! - bx, this.sy[a]! - by) - Math.hypot(this.sx[b]! - bx, this.sy[b]! - by));
+    const fs = phone ? 11 : 12.5;
+    ctx.font = `700 ${fs}px ${FONT_TEXT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3.2;
+    const placed: [number, number, number, number][] = [];
+    for (const i of named) {
+      if (placed.length >= MAX_LABELS) break;
+      const name = this.names[i]!;
+      const w = ctx.measureText(name).width;
+      const x = this.sx[i]!, y = this.sy[i]! - rr * 1.7;
+      const box: [number, number, number, number] = [x - w / 2 - 2, y - fs, w + 4, fs + 4];
+      if (placed.some((p) => box[0] < p[0] + p[2] && box[0] + box[2] > p[0] && box[1] < p[1] + p[3] && box[1] + box[3] > p[1])) continue;
+      placed.push(box);
+      ctx.globalAlpha = 0.92;
+      ctx.strokeStyle = CREAM_HI;
+      ctx.strokeText(name, x, y);
+      ctx.fillStyle = INK;
+      ctx.fillText(name, x, y);
+    }
+    ctx.globalAlpha = 1;
   }
 
   private tailPath(ctx: CanvasRenderingContext2D, i: number, rr: number, tailLen: number): void {
@@ -203,7 +243,9 @@ export class CrowdView {
     const rr = 0.19 * T * (phone ? 1.25 : 1);
     const ring = rr * 2.1;
     const fs = phone ? 12 : 14;
-    const pillW = fs * 2.3, pillH = fs * 1.45;
+    const label = this.names[OWN] ?? 'you';
+    ctx.font = `800 ${fs}px ${FONT_TEXT}`;
+    const pillW = Math.max(fs * 2.3, ctx.measureText(label).width + fs * 1.2), pillH = fs * 1.45;
     let x = bx + this.ox[i]! * T, y = by + this.oy[i]! * T;
     x = Math.max(ring + 6, Math.min(w - ring - pillW - 12, x));
     y = Math.max(ring + pillH + 6, Math.min(h - ring - 6, y));
@@ -244,7 +286,7 @@ export class CrowdView {
     ctx.font = `800 ${fs}px ${FONT_TEXT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('you', lx + pillW / 2, ly + fs * 0.36);
+    ctx.fillText(label, lx + pillW / 2, ly + fs * 0.36);
     ctx.globalAlpha = 1;
   }
 }

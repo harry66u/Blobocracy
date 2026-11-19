@@ -4,6 +4,7 @@ Everyone on the site controls the same blob at the same time. Every player's lef
 
 - **Play:** open the site; no login, no download. Keyboard on desktop, touch buttons on phones.
 - **Pages:** the game at `/`, every attempt at `/runs`, beaten levels at `/hall`, shareable replay clips at `/c/<id>`.
+- **Checkpoints:** a death sends everyone back to the last 20% checkpoint reached (flags in the world; 20/40/60/80%), not the very start. **Names:** you can pick a name when you join; everyone sees it on your dot (see below).
 - **Progress:** `CHECKLIST.md`. Design: `docs/superpowers/specs/2026-11-17-blobocracy-design.md`. Deploying: `docs/DEPLOY.md`.
 
 ## How it works
@@ -39,6 +40,14 @@ Then open http://localhost:5173 in your browser.
 - Move: arrow keys or A / D. Jump: up arrow, W or space. Hold jump longer to jump higher.
 - Open the same link in a second window (or on your phone on the same wifi, using the "Network" address Vite prints) and you are two players fighting over one blob.
 - Stop the game with Ctrl+C.
+
+## Checkpoints
+
+Every level has four, at 20/40/60/80% of the way to the crown. Reaching one is permanent for that level: every death after it sends everyone back there (the run clock and the Big Chomp start fresh) and the death card says "Back to the 40% checkpoint". The death counter and the record (furthest progress) are unchanged. Positions are generated from the solver's perfect-run route onto safe flat pads: run `npx tsx tools/gen-checkpoints.ts` after changing a level (tests fail if the data is stale), and `npm run test:level` proves the level is beatable from each one. To look at them locally: `ADMIN_TOKEN=dev npm run dev`, then `curl -X POST -H 'Authorization: Bearer dev' -H 'content-type: application/json' -d '{"n":2}' http://localhost:5173/admin/debug/checkpoint` (and `/admin/debug/kill`).
+
+## Names
+
+On a first visit a card asks "What should we call you?" (optional; Escape or "Stay anonymous" skips it; it can be changed later in settings). The name is cleaned by the relay (16 characters, letters/numbers/space/`_-.`, no links, no profanity, nothing posing as the game or staff, at most 4 changes per 30 s) and shown to everyone on the player's dot. Only the players currently holding a crowd dot (up to 128 at a time, rotating) are on screen, so names appear for a sample of the crowd, the nearest dots first. Add your own banned words with `NAME_BLOCKLIST=word1,word2` on the edge. Names are not stored anywhere on the server.
 
 ## Run history, hall of fame and clips
 
@@ -135,4 +144,5 @@ Every variable, with its default and which process reads it, is documented at th
 | `PUBLIC_URL` | edge | Your domain, for link previews. |
 | `BUDGET_MODE`, `MONTHLY_BUDGET_USD`, `BUDGET_ALERT_USD` | sim | `cap`, `50`, `25` (your choice). |
 | `POW_DIFFICULTY`, `IP_VOTE_CAP`, `IP_CONN_CAP`, `INPUT_RATE_LIMIT` | edge | Bot defenses: 14 bits, 4 votes, 32 sockets, 20 changes/s. |
+| `NAME_BLOCKLIST` | edge | Extra words player names may not contain (comma separated). |
 | `PORT`, `VIRTUAL_PLAYERS` | dev | Server port (8080); fake players for testing. |

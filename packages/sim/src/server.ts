@@ -319,6 +319,16 @@ export async function startServer(opts: ServerOptions) {
   const budgetTimer = setInterval(budgetTick, BUDGET_EVERY_MS);
   const saveTimer = setInterval(() => { void governor.save().catch((e) => console.error('[budget] save failed', e)); }, SAVE_EVERY_MS);
   const welcomeTimer = setInterval(() => hub?.sendAll(welcome()), WELCOME_EVERY_MS);
+  // Who the crowd dots are, by slot: sent when it changes, and every 5 s so a new relay or player catches up.
+  let lastNames = '';
+  let namesTicks = 0;
+  const namesTimer = setInterval(() => {
+    const ev: ServerEvent = { t: 'names', names: voters.slotNames() };
+    const text = JSON.stringify(ev);
+    if (text === lastNames && ++namesTicks % 10 !== 0) return;
+    lastNames = text;
+    for (const o of outs) o.broadcastEvent(ev);
+  }, 500);
   const snapshotTimer = setInterval(saveSnapshot, SNAPSHOT_EVERY_MS);
   saveSnapshot();
 
@@ -337,7 +347,7 @@ export async function startServer(opts: ServerOptions) {
     /** Re-evaluates the budget now (tests; normally every 5 s). */
     budgetTick,
     stop: async () => {
-      clearInterval(loop); clearInterval(budgetTimer); clearInterval(saveTimer); clearInterval(welcomeTimer); clearInterval(snapshotTimer); clearInterval(catchUp); clearInterval(budgetRetry);
+      clearInterval(loop); clearInterval(budgetTimer); clearInterval(saveTimer); clearInterval(welcomeTimer); clearInterval(namesTimer); clearInterval(snapshotTimer); clearInterval(catchUp); clearInterval(budgetRetry);
       governor.update(relayPrices());
       await governor.save().catch(() => {});
       saveSnapshot();

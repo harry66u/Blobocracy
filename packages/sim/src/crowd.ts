@@ -1,15 +1,15 @@
 import {
-  ACTIVE_WINDOW_S, BLEND, SAMPLE_SLOTS, type SampleEntry, type VoteCounts, type WeightedCounts,
+  ACTIVE_WINDOW_S, BLEND, SAMPLE_SLOTS, cleanName, type SampleEntry, type VoteCounts, type WeightedCounts,
 } from '@blobocracy/shared';
 
 const IN_LEFT = 1, IN_RIGHT = 2, IN_JUMP = 4;
 const DOT_NONE = 0, DOT_LEFT = 1, DOT_RIGHT = 2, DOT_EMPTY = 3;
 
-interface Voter { bits: number; changedAt: number; jumpAt: number; everPressed: boolean; slot: number; remote: boolean }
+interface Voter { bits: number; changedAt: number; jumpAt: number; everPressed: boolean; slot: number; remote: boolean; name?: string }
 
 /** What the sim keeps from an edge relay's latest summary. */
 export interface RelayCrowd { weighted: WeightedCounts; connections: number; sample: SampleEntry[] }
-interface RelayEntry { weighted: WeightedCounts; connections: number; ids: Map<number, number> }
+interface RelayEntry { weighted: WeightedCounts; connections: number; ids: Map<number, number>; /** Names of this relay's sampled players by sample id (as reported; applied when they hold a slot). */ names: Map<number, string> }
 
 /** Voter id for a relay's sampled player: negative, so it never clashes with local ids. */
 const remoteId = (relay: number, sid: number) => -(relay * 65536 + sid) - 1;
@@ -61,7 +61,7 @@ export class Voters {
   /** Replaces relay `relay`'s contribution with its latest summary. */
   setRelay(relay: number, s: RelayCrowd): void {
     let r = this.relays.get(relay);
-    if (!r) { r = { weighted: s.weighted, connections: s.connections, ids: new Map() }; this.relays.set(relay, r); }
+    if (!r) { r = { weighted: s.weighted, connections: s.connections, ids: new Map(), names: new Map() }; this.relays.set(relay, r); }
     r.weighted = { ...s.weighted };
     r.connections = s.connections;
     const seen = new Set<number>();
@@ -84,6 +84,47 @@ export class Voters {
       this.leave(id);
     }
     this.fillSlots();
+  }
+
+  /** A local voter's chosen name (null clears it). Names are cleaned again here: nothing unchecked is ever shown. */
+  setName(id: number, name: string | null): void {
+    const v = this.voters.get(id);
+    if (!v) return;
+    const c = name === null ? null : cleanName(name);
+    if (c === null) delete v.name; else v.name = c;
+  }
+
+  /** Replaces the names relay `relay` reports for its sampled players, keyed by sample id. */
+  setRelayNames(relay: number, names: Record<string, unknown>): void {
+    let r = this.relays.get(relay);
+    if (!r) {
+      r = { weighted: { left: 0, right: 0, jump: 0, active: 0, fresh: 0 }, connections: 0, ids: new Map(), names: new Map() };
+      this.relays.set(relay, r);
+    }
+    const next = new Map<number, string>();
+    let n = 0;
+    for (const [k, raw] of Object.entries(names)) {
+      if (++n > SAMPLE_SLOTS) break;
+      const sid = Number(k);
+      if (!Number.isInteger(sid) || sid < 0 || sid > 0xffff) continue;
+      const c = cleanName(raw);
+      if (c !== null) next.set(sid, c);
+    }
+    r.names = next;
+  }
+
+  /** [slot, name] for every crowd slot whose player has a name, lowest slot first. */
+  slotNames(): [number, string][] {
+    const out: [number, string][] = [];
+    for (const v of this.voters.values()) if (!v.remote && v.name && v.slot >= 0) out.push([v.slot, v.name]);
+    for (const r of this.relays.values()) {
+      for (const [sid, id] of r.ids) {
+        const name = r.names.get(sid);
+        const slot = name === undefined ? -1 : this.voters.get(id)?.slot ?? -1;
+        if (name !== undefined && slot >= 0) out.push([slot, name]);
+      }
+    }
+    return out.sort((a, b) => a[0] - b[0]);
   }
 
   /** Forgets a relay (its link closed): its votes, players and dots go at once. */

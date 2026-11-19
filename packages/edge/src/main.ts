@@ -62,6 +62,7 @@ const edge = await startEdge({
   publicUrl: env.PUBLIC_URL || undefined,
   allowLocalOrigins: env.NODE_ENV !== 'production',
   abuse,
+  nameBlocklist: (env.NAME_BLOCKLIST ?? '').split(',').map((w) => w.trim()).filter(Boolean),
 });
 edgeRef = edge;
 console.log(`Blobocracy edge ${edge.name} on :${edge.port} -> ${simUrl}`);

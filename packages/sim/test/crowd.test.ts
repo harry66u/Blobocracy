@@ -171,3 +171,43 @@ describe('Voters merging relay summaries', () => {
   });
 });
 
+
+describe('names on the crowd dots', () => {
+  const W = () => ({ left: 0, right: 0, jump: 0, active: 0, fresh: 0 });
+  test('a local voter with a name shows it at its slot, and loses it on leaving or renaming to nothing', () => {
+    const v = new Voters();
+    v.join(1); v.join(2);
+    v.setName(1, 'Sleepy Waffle');
+    expect(v.slotNames()).toEqual([[v.slotOf(1), 'Sleepy Waffle']]);
+    v.setName(1, null);
+    expect(v.slotNames()).toEqual([]);
+    v.setName(2, 'Ana');
+    v.leave(2);
+    expect(v.slotNames()).toEqual([]);
+  });
+
+  test("a relay's sampled players show the names that relay reported, even if the names arrive first", () => {
+    const v = new Voters();
+    v.setRelayNames(1, { 9: 'Brave Turnip', 7: 'Zed' });
+    v.setRelay(1, { weighted: W(), connections: 2, sample: [{ id: 9, bits: 0 }] });
+    expect(v.slotNames()).toEqual([[v.relaySlotOf(1, 9), 'Brave Turnip']]);
+    v.setRelay(1, { weighted: W(), connections: 2, sample: [{ id: 9, bits: 0 }, { id: 7, bits: 0 }] });
+    expect(v.slotNames().map(([, n]) => n).sort()).toEqual(['Brave Turnip', 'Zed']);
+  });
+
+  test('names are sorted by slot, names from dropped relays go away, and bad names are refused', () => {
+    const v = new Voters();
+    v.setRelay(1, { weighted: W(), connections: 2, sample: [{ id: 1, bits: 0 }, { id: 2, bits: 0 }] });
+    v.setRelayNames(1, { 2: 'Bee', 1: 'Aye' });
+    const s = v.slotNames();
+    expect(s.map(([slot]) => slot)).toEqual([...s.map(([slot]) => slot)].sort((a, b) => a - b));
+    v.dropRelay(1);
+    expect(v.slotNames()).toEqual([]);
+    v.join(5);
+    v.setName(5, 'shit');
+    expect(v.slotNames()).toEqual([]);
+    v.setRelayNames(2, { 1: 'f u c k' });
+    v.setRelay(2, { weighted: W(), connections: 1, sample: [{ id: 1, bits: 0 }] });
+    expect(v.slotNames()).toEqual([]);
+  });
+});

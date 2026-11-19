@@ -39,6 +39,8 @@ interface Player {
   timing: TimingMonitor;
   flag: FlagReason | null;
   sampleId: number;
+  /** The name the player chose (already cleaned), or null. */
+  name: string | null;
 }
 
 const ACTIVE_MS = ACTIVE_WINDOW_S * 1000;
@@ -75,7 +77,7 @@ export class EdgeCrowd {
   add(id: number, ip: string, sid?: string, watcher = false): void {
     const p: Player = {
       id, ip, ipk: ipKey(ip), caps: capKeys(ip, this.o.ipVoteCap), sid, watcher, bits: 0, changedAt: -Infinity, jumpAt: -Infinity, everPressed: false,
-      pending: -1, rate: new RateLimiter(this.o.rateLimit), timing: new TimingMonitor(), flag: null, sampleId: -1,
+      pending: -1, rate: new RateLimiter(this.o.rateLimit), timing: new TimingMonitor(), flag: null, sampleId: -1, name: null,
     };
     const remembered = sid ? this.flagsBySid.get(sid) : undefined;
     if (remembered && Date.now() - remembered.at < FLAG_MEMORY_MS) p.flag = remembered.reason;
@@ -237,6 +239,19 @@ export class EdgeCrowd {
       if (out.length >= limit) break;
       if (p.flag) out.push({ ip: p.ip, reason: p.flag });
     }
+    return out;
+  }
+
+  /** Sets a player's (already cleaned) name; null clears it. */
+  setName(id: number, name: string | null): void {
+    const p = this.players.get(id);
+    if (p) p.name = name;
+  }
+
+  /** The names of the players currently holding a crowd dot, keyed by sample id (what the sim shows on the dots). Flagged players are never shown. */
+  sampleNames(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const p of this.sampled.values()) if (p.name && !p.flag) out[p.sampleId] = p.name;
     return out;
   }
 

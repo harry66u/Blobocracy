@@ -50,3 +50,12 @@ Updated as work lands. `[x]` done, `[~]` in progress, `[ ]` not started.
 - [x] README: setup, scaling, environment variables
 - [x] Production-readiness review: 1 critical + 8 important findings fixed (519 tests)
 - [ ] Calibrate difficulty from real run history after launch (retune levels in place; versions are tracked)
+
+## After launch feedback
+- [x] Live on Fly.io (blobocracy.fly.dev); relay start-order bug fixed (a stuck sim connection attempt is abandoned after 5 s)
+- [x] Spikes: a smaller hurtbox than the collision box, so grazes don't kill
+- [x] Jumps: longer coyote time, full air steering, and hang time at the top (gaps about 1.6 tiles wider; max height unchanged)
+- [x] Checkpoints every 20% (flags, banner, "Back to the 40% checkpoint"); solver proof from each checkpoint (`npm run test:level`)
+- [x] Player names: first-visit card, shown on the crowd dots, profanity/link filter, rate limit
+- [ ] Redeploy with the above (`fly deploy --ha=false --depot=false`, then stop the burst relay)
+- [ ] Neon database so history survives restarts

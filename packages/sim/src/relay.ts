@@ -1,5 +1,5 @@
 import uWS from 'uWebSockets.js';
-import { decodeClient, encodePong, type ServerEvent } from '@blobocracy/shared';
+import { MAX_NAME_MESSAGE_BYTES, NameChangeLimiter, cleanName, decodeClient, encodePong, parseNameMessage, type EdgeNotice, type ServerEvent } from '@blobocracy/shared';
 import type { AdminRequest, AdminResponse } from './admin';
 import { mountApi, type ApiHandler } from './api';
 import type { Voters } from './crowd';
@@ -13,9 +13,9 @@ export interface Relay {
 }
 
 const TOPIC = 'world';
-const MAX_MESSAGE_BYTES = 64;
+const MAX_MESSAGE_BYTES = MAX_NAME_MESSAGE_BYTES;
 
-interface SocketData { id: number }
+interface SocketData { id: number; names: NameChangeLimiter }
 
 /** Serves browsers directly from the sim process: single-process dev mode (`npm run dev`). */
 export function startLocalRelay(opts: { port: number; voters: Voters; world: World; clock: () => number; api?: ApiHandler; admin?: (r: AdminRequest) => AdminResponse }):
@@ -32,7 +32,7 @@ export function startLocalRelay(opts: { port: number; voters: Voters; world: Wor
     sendPingsAutomatically: true,
     upgrade: (res, req, context) => {
       res.upgrade<SocketData>(
-        { id: nextId++ },
+        { id: nextId++, names: new NameChangeLimiter() },
         req.getHeader('sec-websocket-key'),
         req.getHeader('sec-websocket-protocol'),
         req.getHeader('sec-websocket-extensions'),
@@ -45,7 +45,15 @@ export function startLocalRelay(opts: { port: number; voters: Voters; world: Wor
       ws.send(JSON.stringify(world.welcome(voters.size())), false);
     },
     message: (ws, msg, isBinary) => {
-      if (!isBinary) return;
+      if (!isBinary) {
+        const n = parseNameMessage(Buffer.from(msg).toString());
+        if (!n) return;
+        const d = ws.getUserData();
+        const clean = d.names.allow(Date.now()) ? cleanName(n.name) : null;
+        if (clean !== null) voters.setName(d.id, clean);
+        ws.send(JSON.stringify(clean !== null ? { t: 'name', ok: true, name: clean } satisfies EdgeNotice : { t: 'name', ok: false } satisfies EdgeNotice), false);
+        return;
+      }
       const m = decodeClient(msg);
       if (!m) return;
       if (m.type === 'input') voters.setInput(ws.getUserData().id, m.bits, clock());

@@ -22,12 +22,13 @@ export function sceneLevelOf(level: Level): SceneLevel {
 export const progressX = (level: Level, p: number) => level.spawn.x + p * (level.goalX - level.spawn.x);
 
 /** The frame's crowd sample as dots (empty slots skipped). Reuses `out`. */
-export function sceneDots(d: Uint8Array, j: Uint8Array, out: SceneDot[] = []): SceneDot[] {
+export function sceneDots(d: Uint8Array, j: Uint8Array, out: SceneDot[] = [], names?: ReadonlyMap<number, string>): SceneDot[] {
   out.length = 0;
   for (let i = 0; i < d.length; i++) {
     const code = d[i]!;
     if (code === DOT_EMPTY) continue; // nobody in this slot
-    out.push({ slot: i, dir: code === DOT_LEFT ? -1 : code === DOT_RIGHT ? 1 : 0, jump: j[i] === 1 });
+    const name = names?.get(i);
+    out.push({ slot: i, dir: code === DOT_LEFT ? -1 : code === DOT_RIGHT ? 1 : 0, jump: j[i] === 1, ...(name ? { name } : {}) });
   }
   return out;
 }

@@ -97,12 +97,14 @@ export type SimControl =
 /** Relay → sim control. */
 export type RelayControl =
   | { c: 'hello'; name: string; alwaysOn?: boolean; hourlyUsd?: number }
+  /** The names of this relay's sampled players, keyed by their sample id (see SampleEntry). */
+  | { c: 'names'; names: Record<string, string> }
   | { c: 'stats'; stats: Record<string, unknown> }
   | { c: 'admin'; id: number; method: string; path: string; auth: string; body: string };
 
 export type LinkControl = SimControl | RelayControl;
 
-const KINDS = new Set(['policy', 'welcome', 'bans', 'resetFlags', 'adminRes', 'hello', 'stats', 'admin']);
+const KINDS = new Set(['policy', 'welcome', 'bans', 'resetFlags', 'adminRes', 'hello', 'stats', 'admin', 'names']);
 
 /** Control text starts with `{"c":`; anything else on the link is a world event for players. */
 export function isControlText(text: string): boolean {

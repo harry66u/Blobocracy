@@ -1,6 +1,6 @@
 import {
   PHYS, T_CONVEYOR_L, T_CONVEYOR_R, T_CRUMBLE, T_EMPTY, T_SOLID, T_SPIKE_UP, T_SPRING,
-  crumbleGone, entityState, tileAt, type Dynamics, type Level,
+  crumbleGone, entityState, randomName, tileAt, type Dynamics, type Level,
 } from '@blobocracy/shared';
 import type { Voters } from './crowd';
 import type { World } from './world';
@@ -80,11 +80,13 @@ export class VirtualCrowd {
 
   constructor(private voters: Voters, count: number, seed: number) {
     this.rand = rng(seed);
+    const nameRand = rng(seed ^ 0x9e3779b9); // its own stream, so naming never changes how the crowd plays
     for (let i = 0; i < count; i++) {
       const r = this.rand();
       const persona: Persona = r < 0.7 ? 'helper' : r < 0.9 ? 'chaos' : 'idle';
       const f: Fake = { id: FIRST_ID + i, persona, dir: 0, nextRoll: 0, jumpAt: Infinity, jumpUntil: 0, reacts: this.rand() < 0.9 };
       voters.join(f.id);
+      if (nameRand() < 0.6) voters.setName(f.id, randomName(nameRand));
       this.fakes.push(f);
     }
   }

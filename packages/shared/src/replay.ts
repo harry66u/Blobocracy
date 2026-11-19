@@ -260,6 +260,8 @@ export function isServerEvent(v: unknown): v is ServerEvent {
       return isCount(e.run) && (e.checkpoint === undefined || isCount(e.checkpoint)) && (e.zone === undefined || isCount(e.zone));
     case 'checkpoint':
       return isCount(e.run) && isCount(e.index) && isFrac(e.progress);
+    case 'names':
+      return Array.isArray(e.names) && e.names.length <= 255 && e.names.every((n) => Array.isArray(n) && n.length === 2 && isCount(n[0]) && typeof n[1] === 'string' && n[1].length <= 64);
     case 'clip':
       return isClipId(e.id) && KINDS.includes(e.kind as ReplayKind) && isCount(e.run);
     case 'win':
@@ -322,6 +324,7 @@ export class ReplayRecorder {
     const kept: ServerEvent[] = [];
     for (const e of events) {
       this.apply(e);
+      if (e.t === 'names') continue; // who is on the dots is live information, not part of a clip
       if (e.t !== 'welcome') kept.push(e);
       else if (kept.length === 0) before = { ...this.state };
     }

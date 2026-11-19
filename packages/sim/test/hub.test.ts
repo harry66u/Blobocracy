@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'vitest';
+import { encodeSummary } from '@blobocracy/shared';
 import { startServer } from '../src/server';
 
 type Srv = Awaited<ReturnType<typeof startServer>>;
@@ -50,5 +51,27 @@ describe('relay link hardening (I8)', () => {
     await expect(relay(srv.linkPort)).rejects.toThrow();
     const ok = await relay(srv.linkPort, { 'x-relay-secret': 'a'.repeat(32) });
     expect(ok.closed).toBe(false);
+  });
+});
+
+describe('player names over the relay link', () => {
+  test("a relay's reported names reach the crowd slots and are broadcast to every relay as a names event", async () => {
+    srv = await startServer({ port: null, virtualPlayers: 0, link: { port: 0, host: '127.0.0.1' }, log: () => {} });
+    const r = await relay(srv.linkPort);
+    const zero = { left: 0, right: 0, jump: 0, active: 0, fresh: 0 };
+    r.ws.send(encodeSummary({ seq: 1, weighted: zero, buckets: [0, 0, 0, 0, 0, 0, 0, 0], connections: 2, watchers: 0, bytesSent: 0, oldestInputAt: 0, sample: [{ id: 9, bits: 0 }, { id: 4, bits: 0 }] }));
+    r.ws.send(JSON.stringify({ c: 'names', names: { 9: 'Brave Turnip', 4: 'shit', 77: 'Ghost' } }));
+    const ev = await waitFor(() => r.texts.map((t) => JSON.parse(t)).find((m) => m.t === 'names' && m.names.length > 0));
+    expect(ev.names.map((n: [number, string]) => n[1])).toEqual(['Brave Turnip']); // the rude one and the one nobody samples are not shown
+    expect(srv.voters.slotNames().map(([, n]) => n)).toEqual(['Brave Turnip']);
+  });
+
+  test('a malformed names message is ignored', async () => {
+    srv = await startServer({ port: null, virtualPlayers: 0, link: { port: 0, host: '127.0.0.1' }, log: () => {} });
+    const r = await relay(srv.linkPort);
+    for (const m of ['{"c":"names"}', '{"c":"names","names":[1,2]}', '{"c":"names","names":"x"}', '{"c":"names","names":{"a":"b","1":{"x":1}}}']) r.ws.send(m);
+    await new Promise((res) => setTimeout(res, 100));
+    expect((await fetch(`http://127.0.0.1:${srv.linkPort}/healthz`)).status).toBe(200);
+    expect(r.closed).toBe(false);
   });
 });

@@ -4,7 +4,8 @@
 // the Director and the CameraRig; sound comes from the synthesized GameAudio module.
 import { createGameAudio } from './audio/index.ts';
 import './fonts.css';
-import { checkpointsOf, progressOf, startOf, zoneAt, type ServerEvent } from '@blobocracy/shared';
+import { checkpointsOf, progressOf, randomName, startOf, zoneAt, type ServerEvent } from '@blobocracy/shared';
+import { loadName, markAsked, saveName, wasAsked } from './myname.ts';
 import { CameraRig } from './camera.ts';
 import { Director } from './director.ts';
 import { connect } from './net.ts';
@@ -20,7 +21,7 @@ import { deathCardShareSlot, renderFrame, resetRenderer, type Scene, type SceneD
 import { winCardShareSlot } from './render/frame.ts';
 import { ClipBook, mountShareButton, withClip } from './share.ts';
 import { composeScene, sceneBlob, sceneDots } from './scenemap.ts';
-import { loadMuted, loadReducedMotion, mountHudControls, saveMuted, saveReducedMotion } from './settings.ts';
+import { loadMuted, loadReducedMotion, mountHudControls, mountNamePrompt, saveMuted, saveReducedMotion } from './settings.ts';
 import { createCanvasView, loadFonts } from './view.ts';
 
 // The level being played: one SceneLevel per level for the whole session (the renderer caches
@@ -100,6 +101,10 @@ function onEvent(e: ServerEvent): void {
       audio.levelUp();
       break;
     }
+    case 'names':
+      slotNames.clear();
+      for (const [slot, name] of e.names) slotNames.set(slot, name);
+      break;
     case 'checkpoint':
       checkpoint = e.index;
       director.onCheckpoint(e.index, e.progress, now);
@@ -142,7 +147,17 @@ function onEvent(e: ServerEvent): void {
 }
 
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const net = connect(`${proto}://${location.host}/ws`, onEvent);
+/** The name this player chose (null: anonymous), and the names on the crowd dots by slot. */
+let myName: string | null = loadName();
+const slotNames = new Map<number, string>();
+let namePrompt: ReturnType<typeof mountNamePrompt> | null = null;
+const net = connect(`${proto}://${location.host}/ws`, onEvent, (r) => {
+  controls.nameReply(r.ok, r.name);
+  if (r.ok && r.name) { myName = r.name; saveName(r.name); markAsked(); } else net.sendName(myName); // refused: go back to the old one
+  namePrompt?.reply(r.ok);
+  if (r.ok) namePrompt = null;
+});
+if (myName) net.sendName(myName);
 const input = new InputState((bits) => net.sendInput(bits));
 
 let onLayout = () => {};
@@ -157,6 +172,7 @@ const controls = mountHudControls(document.body, {
   },
   reduced: () => reduced,
   setReduced: (on) => { reduced = on; saveReducedMotion(on); },
+  name: { current: () => myName, submit: (n) => net.sendName(n) },
 });
 onLayout = () => controls.place();
 
@@ -191,6 +207,14 @@ let loadingGone = false;
 function hideLoading(): void {
   if (loadingGone || !loadingEl) return;
   loadingGone = true;
+  // first visit: offer to pick a name once the game is on screen (it is optional)
+  if (!myName && !wasAsked()) {
+    namePrompt = mountNamePrompt(document.body, {
+      suggest: () => randomName(Math.random),
+      submit: (n) => net.sendName(n),
+      skip: () => { markAsked(); namePrompt = null; },
+    });
+  }
   loadingEl.classList.add('gone');
   setTimeout(() => loadingEl.remove(), 700);
 }
@@ -245,8 +269,8 @@ function frame(): void {
     level, sceneLevel: lv.sceneLevel, frame: f, blob, runTime, online, muted, reduced, progress,
     levelLabel: hudLevelLabel(level.id, encore), encore, levelName: lv.name, nextLevel: encore ? null : lv.next,
     winClip: d.win ? clips.forRun(d.win.run) !== null : false,
-    dots: f ? sceneDots(f.dots, f.dotJump, dots) : [],
-    you: { dir: (bits & 1) && !(bits & 2) ? -1 : (bits & 2) && !(bits & 1) ? 1 : 0, jump: (bits & 4) !== 0 },
+    dots: f ? sceneDots(f.dots, f.dotJump, dots, slotNames) : [],
+    you: { dir: (bits & 1) && !(bits & 2) ? -1 : (bits & 2) && !(bits & 1) ? 1 : 0, jump: (bits & 4) !== 0, ...(myName ? { name: myName } : {}) },
     director: d,
     showCard: cardRun !== null,
     checkpoint,

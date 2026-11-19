@@ -62,6 +62,8 @@ export type ServerEvent =
   }
   | { t: 'death'; run: number; cause: Cause; progress: number; deaths: number; zone: number; nearRecord: boolean; /** The checkpoint everyone goes back to (0 = the start). */ checkpoint?: number }
   | { t: 'checkpoint'; run: number; index: number; progress: number }
+  /** Names of the players shown as crowd dots: [slot, name] for the slots whose player chose one. */
+  | { t: 'names'; names: [number, string][] }
   | { t: 'zone'; run: number; index: number; name: string }
   | { t: 'record'; run: number; progress: number }
   | { t: 'reset'; run: number; checkpoint?: number; zone?: number }
@@ -79,7 +81,8 @@ export const CLIP_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
  * the sim right now. While `up` is false, clients show "Reconnecting to the blob…" over the
  * last frame; the socket to the relay stays open and pings keep being answered.
  */
-export type EdgeNotice = { t: 'sim'; up: boolean };
+/** Sent by the relay to one player's socket: whether the sim is reachable, and the answer to a name they chose. */
+export type EdgeNotice = { t: 'sim'; up: boolean } | { t: 'name'; ok: boolean; name?: string };
 
 const PHASES: readonly Phase[] = ['running', 'dying', 'paused', 'celebrating'];
 const STATE_HEADER = 46;
