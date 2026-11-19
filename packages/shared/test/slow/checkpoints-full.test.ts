@@ -9,7 +9,8 @@ for (const level of LEVELS) {
     for (const c of checkpointsOf(level)) {
       test(`is beatable from checkpoint ${c.index} (x=${c.x}) to the crown`, () => {
         const start = { b: createBodyAt(level, c.x, c.y), dyn: createDynamics() };
-        const r = solve(level, level.goalX - 0.5, 250, 1200, start);
+        // level 2's ferries are timing-sensitive: a narrow beam can miss a crossing that exists
+        const r = solve(level, level.goalX - 0.5, level.id === 2 ? 800 : 250, 1200, start);
         expect(r.ok, `got stuck at x=${r.maxX.toFixed(1)}`).toBe(true);
       }, 3_600_000);
     }
