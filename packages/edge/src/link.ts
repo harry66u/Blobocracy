@@ -14,6 +14,8 @@ export interface SimLinkOptions {
   maxBackoffMs?: number;
   /** No message from the sim for this long means it is gone, even without a close. */
   silenceMs?: number;
+  /** A connection attempt still not open after this long is abandoned and retried (default 5 s). */
+  connectTimeoutMs?: number;
 }
 
 /**
@@ -28,6 +30,7 @@ export class SimLink {
   private lastHeard = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private watchdog: ReturnType<typeof setInterval>;
+  private connectTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private o: SimLinkOptions) {
     this.backoff = o.minBackoffMs ?? 250;
@@ -50,7 +53,11 @@ export class SimLink {
     }
     this.ws = ws;
     ws.binaryType = 'arraybuffer';
+    // On Fly the relay can start before the sim: an attempt that neither opens nor fails would
+    // otherwise leave the relay waiting forever. Give up on it and try again.
+    this.connectTimer = setTimeout(() => { if (!this.up) this.drop(); }, this.o.connectTimeoutMs ?? 5000);
     ws.onopen = () => {
+      clearTimeout(this.connectTimer);
       this.up = true;
       this.lastHeard = Date.now();
       this.backoff = this.o.minBackoffMs ?? 250;
@@ -81,6 +88,7 @@ export class SimLink {
   }
 
   private drop(): void {
+    clearTimeout(this.connectTimer);
     const ws = this.ws;
     if (!ws) return;
     this.ws = null;
@@ -106,6 +114,7 @@ export class SimLink {
   close(): void {
     this.stopped = true;
     clearTimeout(this.timer);
+    clearTimeout(this.connectTimer);
     clearInterval(this.watchdog);
     const ws = this.ws;
     this.ws = null;

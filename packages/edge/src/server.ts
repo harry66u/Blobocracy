@@ -43,6 +43,8 @@ export interface EdgeOptions {
   hourlyUsd?: number;
   reconnectMinMs?: number;
   reconnectMaxMs?: number;
+  /** Abandon a sim connection attempt that has not opened after this long (default 5000). */
+  connectTimeoutMs?: number;
   /** Bytes of WebSocket + TLS + TCP/IP overhead counted per message sent, for the egress estimate. */
   egressOverheadBytes?: number;
   /** Treat ping timestamps as epoch ms and record client → edge latency (load tests on one machine). */
@@ -152,6 +154,7 @@ export async function startEdge(o: EdgeOptions) {
     secret: o.relaySecret,
     minBackoffMs: o.reconnectMinMs,
     maxBackoffMs: o.reconnectMaxMs,
+    connectTimeoutMs: o.connectTimeoutMs,
     hello: () => ({ c: 'hello', name, alwaysOn: o.alwaysOn, hourlyUsd: o.hourlyUsd }),
     onFrame: (frame) => {
       counters.framesIn++;

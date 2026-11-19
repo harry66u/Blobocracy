@@ -84,7 +84,7 @@ The first time, deploy with `--ha=false`. Without it Fly creates two machines pe
 fly deploy --ha=false
 ```
 
-The first deploy builds the image (a few minutes), creates the sim's 1 GB data volume, and starts one sim, one edge and one burst relay (step 6 sets up the burst relays properly). Later deploys are a plain `fly deploy`: it keeps the number of machines in each group. When it finishes, open the game:
+The first deploy builds the image (a few minutes), creates the sim's 1 GB data volume, and starts one sim, one edge and one burst relay. **Stop that burst relay right away** (step 6 shows how): it belongs stopped until a spike, and while it runs the load balancer sends it half the visitors. Later deploys are a plain `fly deploy`: it keeps the number of machines in each group. When it finishes, open the game:
 
 ```bash
 fly open

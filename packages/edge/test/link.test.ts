@@ -1,3 +1,4 @@
+import net from 'node:net';
 import uWS from 'uWebSockets.js';
 import { afterEach, describe, expect, test } from 'vitest';
 import { startEdge } from '../src/server';
@@ -37,5 +38,27 @@ describe('edge relay link hardening (I8)', () => {
     const p = await waitFor(() => e.state().policy.tier === 90 && e.state().policy);
     expect(p).toMatchObject({ tier: 90, alwaysOn: false, capacity: 7, sampleQuota: 16 });
     expect((await fetch(`http://127.0.0.1:${e.port}/healthz`)).status).toBe(200);
+  });
+
+  test('a connection attempt that never completes is abandoned and retried', async () => {
+    // Like a relay that starts before the sim does on Fly: the first attempt just hangs, silently.
+    const realPort = await fakeSim([JSON.stringify({ c: 'policy', tier: 70, frameHz: 12, alwaysOn: false, sampleQuota: 16, capacity: 9 })]);
+    let first = true;
+    const proxy = net.createServer((client) => {
+      if (first) { first = false; return; } // swallow it: no reply, no close
+      const up = net.connect(realPort, '127.0.0.1');
+      client.pipe(up); up.pipe(client);
+      client.on('error', () => up.destroy()); up.on('error', () => client.destroy());
+    });
+    await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+    stops.push(() => { proxy.close(); });
+    const port = (proxy.address() as net.AddressInfo).port;
+    const e = await startEdge({
+      port: 0, host: '127.0.0.1', simUrl: `ws://127.0.0.1:${port}/relay`, sessionSecret: 's', powBits: 0,
+      connectTimeoutMs: 300, reconnectMinMs: 50,
+    });
+    stops.push(() => e.stop());
+    const p = await waitFor(() => e.state().policy.tier === 70 && e.state().policy, 4000);
+    expect(p).toMatchObject({ tier: 70, capacity: 9 });
   });
 });
