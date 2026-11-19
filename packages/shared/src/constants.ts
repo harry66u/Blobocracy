@@ -16,8 +16,8 @@ export const LEVEL_HEIGHT = 18;
 
 const GRAVITY = 52;
 /** Hang time (see PHYS.hangSpeed): near the apex gravity is scaled by HANG_GRAVITY, which adds this much height. */
-const HANG_SPEED = 5;
-const HANG_GRAVITY = 0.5;
+const HANG_SPEED = 4;
+const HANG_GRAVITY = 0.6;
 const HANG_EXTRA_HEIGHT = (HANG_SPEED * HANG_SPEED) / (2 * GRAVITY) * (1 / HANG_GRAVITY - 1);
 export const PHYS = {
   gravity: GRAVITY,

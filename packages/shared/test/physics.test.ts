@@ -248,22 +248,25 @@ describe('jumping', () => {
     expect(b.vx).toBeCloseTo(PHYS.accelGround / 60, 9);
   });
 
-  test('hang time at the top of a jump: a full-speed jump clears a 6-tile gap and lands', () => {
+  test('hang time at the top of a jump: a full-speed jump now travels over 5.3 tiles (5.0 without it) at the same 3.2 tile height', () => {
     const level = makeLevel([
-      '..@...........................G.........',
-      '###############......###################',
-      '###############......###################',
-      '###############......###################',
+      '.@..........................................G',
+      '#############################################',
+      '#############################################',
+      '#############################################',
     ]);
     const b = createBody(level);
-    let jumped = false;
+    for (let i = 0; i < 200 && b.vx < PHYS.runSpeed - 0.01; i++) stepBody(b, { move: 1, jumpHeld: false }, level);
+    const x0 = b.x;
+    let top = b.y;
     for (let i = 0; i < 300; i++) {
-      if (b.x >= 15) jumped = true;
-      expect(stepBody(b, { move: 1, jumpHeld: jumped }, level)).toBeNull();
-      if (jumped && b.grounded) break;
+      stepBody(b, { move: 1, jumpHeld: true }, level);
+      top = Math.min(top, b.y);
+      if (i > 3 && b.grounded) break;
     }
-    expect(b.grounded).toBe(true);
-    expect(b.x).toBeGreaterThan(21);
+    expect(b.x - x0).toBeGreaterThan(5.3);
+    expect(STAND_Y - top).toBeGreaterThan(3.1);
+    expect(STAND_Y - top).toBeLessThan(3.3);
   });
 
   test('a full-speed jump clears a 5-tile gap and lands', () => {
